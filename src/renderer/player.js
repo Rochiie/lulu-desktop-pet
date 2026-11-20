@@ -18,6 +18,9 @@
   // video is reloaded. Reloading a clip that has sat unused this long frees it;
   // a reloaded clip still starts within a frame, so hand-overs stay seamless.
   const RELEASE_IDLE_MS = 20000;
+  // A clip cut short (a click, a grab) fades out over this long on top of
+  // whatever comes next, instead of snapping to it in one frame.
+  const CUT_FADE_MS = 140;
   const AMBIENT_FPS = 30; // redraws for the rolling ball and a dropping bone
   const SNOW_FPS = 20; // the snow has its own layer, redrawn this often
   const BED_RIM_BACK = 44; // bed rim heights in clip pixels above her ground line
@@ -269,6 +272,9 @@
       this.ambientPaused = false;
       this.ambientLast = 0;
       this.lastDrawAt = 0;
+      this.fade = null; // { cx, dir, scale, size, start } while a cut-short frame fades out
+      this.fadeCanvas = null; // that frame
+      this.fadeRaf = null;
       this.width = canvas.width;
       this.height = canvas.height;
       this.shadows = true;
@@ -514,8 +520,52 @@
     }
 
     stop() {
-      if (this.active) this._finish(this.active, new Interrupt());
+      if (this.active) {
+        this._keepForFade(this.active);
+        this._finish(this.active, new Interrupt());
+      }
       if (this.turning) this._endTurn(this.turning, new Interrupt());
+    }
+
+    // Keeps the frame on screen now, to fade out over what comes next.
+    _keepForFade(a) {
+      if (a.lastIndex < 0 || a.video.readyState < HAVE_CURRENT_DATA) return;
+      const { width, height } = this.manifest;
+      if (!this.fadeCanvas) {
+        this.fadeCanvas = document.createElement('canvas');
+        this.fadeCanvas.width = width;
+        this.fadeCanvas.height = height;
+      }
+      const fctx = this.fadeCanvas.getContext('2d');
+      if (!fctx) throw new Error('2D canvas is not available');
+      fctx.clearRect(0, 0, width, height);
+      fctx.drawImage(a.video, 0, 0, width, height);
+      const { cx, dir, scale } = this.view();
+      this.fade = { cx, dir, scale, size: this.displaySize(), start: performance.now() };
+      if (this.fadeRaf !== null) return;
+      const step = () => {
+        this.fadeRaf = null;
+        if (!this.fade) return;
+        this.draw();
+        if (this.fade) this.fadeRaf = requestAnimationFrame(step);
+      };
+      this.fadeRaf = requestAnimationFrame(step);
+    }
+
+    _drawFade(ctx) {
+      const f = this.fade;
+      const t = (performance.now() - f.start) / CUT_FADE_MS;
+      if (t >= 1) {
+        this.fade = null;
+        return;
+      }
+      const k = this.dpr * f.scale;
+      const keepFeetDown = k * this.manifest.groundY * (1 - f.size);
+      ctx.save();
+      ctx.globalAlpha = 1 - t;
+      ctx.setTransform(k * f.dir * f.size, 0, 0, k * f.size, this.dpr * f.cx, keepFeetDown);
+      ctx.drawImage(this.fadeCanvas, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
+      ctx.restore();
     }
 
     // A treat on the ground (null removes it). It drops in from above.
@@ -927,6 +977,7 @@
         ctx.setTransform(k * dir * squash * size, 0, 0, k * size, this.dpr * cx, keepFeetDown - lift);
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
+      if (this.fade) this._drawFade(ctx);
       if (this.bed) this._drawBed(ctx, 'front'); // ...behind its front rim
       if (this.bowl) this._drawBowl(ctx); // in front of her, so her snout dips into it
       if (this.toy) this._drawToy(ctx);

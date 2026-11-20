@@ -62,6 +62,7 @@
       const far = drag.kind === 'toy' || drag.kind === 'lulu' ? Math.hypot(dx, dy) : Math.abs(dx);
       if (!drag.moved && far > config.dragThresholdPx) {
         drag.moved = true;
+        document.body.classList.add('grabbing');
         if (drag.kind === 'lulu') behaviour.beginDrag();
       }
       if (!drag.moved) return;
@@ -89,6 +90,7 @@
       if (!drag || event.pointerId !== drag.id) return;
       const finished = drag;
       drag = null;
+      document.body.classList.remove('grabbing');
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       if (finished.kind === 'bowl') {
         if (finished.moved) api.savePlace('bowlX', behaviour.prefs.bowlX);

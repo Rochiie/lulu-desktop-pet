@@ -19,8 +19,14 @@ canvas {
   pointer-events: none;
 }
 
+/* An open hand over her (and her ball, bowl and bed): they can be picked up
+   or moved. A closed hand while carrying something. */
 body.over-lulu {
-  cursor: pointer;
+  cursor: grab;
+}
+
+body.grabbing {
+  cursor: grabbing;
 }
 
 /* The clips play here, invisibly, and are drawn onto the canvas. */
