@@ -17,6 +17,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const { version } = require('../package.json');
 const tag = `v${version}`;
+const BLOCKMAP = 'Lulu-Setup.exe.blockmap';
 
 function findGh() {
   const candidates = ['gh', path.join(process.env.ProgramFiles || 'C:\\Program Files', 'GitHub CLI', 'gh.exe')];
@@ -63,12 +64,24 @@ function main() {
     env: { ...process.env, GH_TOKEN: token },
   });
 
-  const assets = JSON.parse(out(gh, ['release', 'view', tag, '--json', 'assets,isDraft'])) ;
-  const names = assets.assets.map((a) => a.name);
-  for (const needed of ['latest.yml', 'Lulu-Setup.exe']) {
+  const view = () => JSON.parse(out(gh, ['release', 'view', tag, '--json', 'assets,isDraft']));
+  let release = view();
+  // The blockmap lets updates download only what changed. electron-builder
+  // sometimes reports uploading it without it arriving, so check and fill in.
+  if (!release.assets.some((a) => a.name === BLOCKMAP)) {
+    console.log(`\nUploading ${BLOCKMAP}…`);
+    const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'lulu-release-'));
+    const file = path.join(dir, BLOCKMAP);
+    fs.copyFileSync(path.join(ROOT, 'dist', 'Lulu Setup.exe.blockmap'), file);
+    run(gh, ['release', 'upload', tag, file, '--clobber']);
+    fs.rmSync(dir, { recursive: true, force: true });
+    release = view();
+  }
+  const names = release.assets.map((a) => a.name);
+  for (const needed of ['latest.yml', 'Lulu-Setup.exe', BLOCKMAP]) {
     if (!names.includes(needed)) throw new Error(`Release ${tag} is missing ${needed}`);
   }
-  if (assets.isDraft) throw new Error(`Release ${tag} is still a draft`);
+  if (release.isDraft) throw new Error(`Release ${tag} is still a draft`);
   console.log(`\nReleased ${tag}: ${names.join(', ')}`);
 }
 

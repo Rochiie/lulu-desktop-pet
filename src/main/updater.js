@@ -28,6 +28,7 @@ function createUpdater({ app, log, onChange, notify, loadUpdater = () => require
   };
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.disableWebInstaller = true; // we ship the full installer only
 
   const state = { status: 'idle', version: null, manual: false };
   const set = (patch) => {
