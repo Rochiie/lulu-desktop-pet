@@ -47,13 +47,11 @@ function releaseInfo(gh) {
   return r.status === 0 ? JSON.parse(r.stdout) : null;
 }
 
-// Release notes: the version commit's message, without the attribution line.
-function notesFromCommit() {
-  return out('git', ['log', '-1', '--format=%B'])
-    .split('\n')
-    .filter((line) => !/^Co-Authored-By:/i.test(line))
-    .join('\n')
-    .trim();
+// Release notes: one line per commit since the previous release's tag.
+function releaseNotes() {
+  const prev = spawnSync('git', ['describe', '--tags', '--abbrev=0', 'HEAD^'], { cwd: ROOT, encoding: 'utf8' });
+  const range = prev.status === 0 ? `${prev.stdout.trim()}..HEAD` : 'HEAD';
+  return out('git', ['log', range, '--format=- %s']) || `Lulu ${version}`;
 }
 
 // Uploads a file from dist/ under the asset name the updater expects.
@@ -93,7 +91,7 @@ function main() {
   // parallel uploads otherwise race to create it and one of them fails.
   // While it is a draft, no installed Lulu can see a half-uploaded release.
   if (!existing) {
-    run(gh, ['release', 'create', tag, '--draft', '--verify-tag', '--title', `Lulu ${version}`, '--notes', notesFromCommit()]);
+    run(gh, ['release', 'create', tag, '--draft', '--verify-tag', '--title', `Lulu ${version}`, '--notes', releaseNotes()]);
   }
 
   console.log(`\nBuilding and uploading ${tag}…`);
