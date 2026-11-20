@@ -13,6 +13,18 @@
 //   npm run make-clip -- <video.mp4> <clip_name> [--ends-facing left]
 // The video must start on her standing pose facing right, and end on it
 // (or on the mirrored pose with --ends-facing left, as for a turn).
+//
+// Options:
+//   --from N / --to N   use only source frames N..M (e.g. to cut before a
+//                       generator's end-of-clip zoom or morph)
+//   --no-zoom           keep the start scale throughout (no zoom correction)
+//   --zoom-from N / --zoom-to N
+//                       source frames over which the camera zoom happens
+//                       (default: worked out from her outline)
+//   --blend-end N       frames blended into the exact end pose (default 6)
+//   --min-match X       refuse if the first/last frame matches her pose
+//                       less than this (default 0.85)
+//   --dry-run           report the matches without writing anything
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawnSync } = require('node:child_process');
@@ -29,17 +41,36 @@ function parseArgs() {
   if (self < 0) throw new Error('Could not find this script in the command line');
   const raw = process.argv.slice(self + 1);
   const positional = [];
-  let endsFacing = 'right';
+  const opts = { endsFacing: 'right', from: null, to: null, zoom: true, zoomFrom: null, zoomTo: null, blendEnd: 6, minMatch: 0.85, dryRun: false };
+  const int = (s, flag) => {
+    const n = Number(s);
+    if (!Number.isInteger(n) || n < 0) throw new Error(`${flag} needs a frame number`);
+    return n;
+  };
   for (let i = 0; i < raw.length; i += 1) {
-    if (raw[i] === '--ends-facing') endsFacing = raw[++i];
+    if (raw[i] === '--ends-facing') opts.endsFacing = raw[++i];
+    else if (raw[i] === '--from') opts.from = int(raw[++i], '--from');
+    else if (raw[i] === '--to') opts.to = int(raw[++i], '--to');
+    else if (raw[i] === '--blend-end') opts.blendEnd = int(raw[++i], '--blend-end');
+    else if (raw[i] === '--no-zoom') opts.zoom = false;
+    else if (raw[i] === '--zoom-from') opts.zoomFrom = int(raw[++i], '--zoom-from');
+    else if (raw[i] === '--zoom-to') opts.zoomTo = int(raw[++i], '--zoom-to');
+    else if (raw[i] === '--dry-run') opts.dryRun = true;
+    else if (raw[i] === '--min-match') {
+      opts.minMatch = Number(raw[++i]);
+      if (!(opts.minMatch > 0 && opts.minMatch <= 1)) throw new Error('--min-match needs a number between 0 and 1');
+    }
     else if (!raw[i].startsWith('--')) positional.push(raw[i]);
   }
   const [video, name] = positional;
-  if (!video || !name) throw new Error('Usage: npm run make-clip -- <video.mp4> <clip_name> [--ends-facing left]');
+  if (!video || !name) {
+    throw new Error('Usage: npm run make-clip -- <video.mp4> <clip_name> [--ends-facing left] '
+      + '[--from N] [--to N] [--no-zoom] [--zoom-from N] [--zoom-to N] [--blend-end N] [--min-match X] [--dry-run]');
+  }
   if (!/^[a-z0-9_]+$/.test(name)) throw new Error('Clip name: lowercase letters, digits and _ only');
-  if (!['left', 'right'].includes(endsFacing)) throw new Error('--ends-facing must be left or right');
+  if (!['left', 'right'].includes(opts.endsFacing)) throw new Error('--ends-facing must be left or right');
   if (!fs.existsSync(video)) throw new Error(`Video not found: ${video}`);
-  return { video: path.resolve(video), name, endsFacing };
+  return { video: path.resolve(video), name, ...opts };
 }
 
 function findFfmpeg() {
@@ -74,6 +105,14 @@ app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'lulu-clip-electro
 
 ipcMain.handle('job', () => ({
   video: job.video,
+  from: job.from,
+  to: job.to,
+  zoom: job.zoom,
+  zoomFrom: job.zoomFrom,
+  zoomTo: job.zoomTo,
+  blendEnd: job.blendEnd,
+  minMatch: job.minMatch,
+  dryRun: job.dryRun,
   startRef: path.join(REFS, 'stand_facing_right.png'),
   endRef: path.join(REFS, job.endsFacing === 'left' ? 'stand_facing_left.png' : 'stand_facing_right.png'),
 }));
@@ -86,6 +125,12 @@ ipcMain.handle('fail', (_e, message) => {
   app.exit(1);
 });
 ipcMain.handle('done', (_e, report) => {
+  if (job.dryRun) {
+    console.log('Dry run: nothing written.');
+    fs.rmSync(framesDir, { recursive: true, force: true });
+    app.exit(0);
+    return;
+  }
   try {
     const out = path.join(ROOT, 'assets', `${job.name}.webm`);
     const ffmpeg = findFfmpeg();

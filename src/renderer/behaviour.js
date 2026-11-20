@@ -555,6 +555,7 @@
     async playClip(name, options) {
       await this.player.play(name, options);
       this.pose = this.manifest.clips[name].endPose;
+      this.lastPlayed = name;
     }
 
     // ------------------------------------------------------------ standing
@@ -649,7 +650,11 @@
       const [lo, hi] = this.config.napSeconds;
       const napScale = this.tune ? 1 : this.mood().nap;
       this.napEnds = Date.now() + L.randRange(this.rng, lo, hi) * napScale * 1000;
-      if (this.hasClip('spin') && this.rng() < this.config.spinBeforeNap) await this.playClip('spin');
+      // Circle before lying down (not straight after turning round: two
+      // rotations in a row look odd).
+      if (this.hasClip('spin') && this.lastPlayed !== 'turn' && this.rng() < this.config.spinBeforeNap) {
+        await this.playClip('spin');
+      }
       await this.playClip('lie_down');
     }
 

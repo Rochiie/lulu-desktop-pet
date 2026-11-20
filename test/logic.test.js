@@ -228,3 +228,25 @@ test('bowlRoute always lands her nose exactly at the bowl, with a modest stride 
     }
   }
 });
+
+test('lying-down artwork is shown at standing size, eased in and out', () => {
+  const cfg = { lyingSize: 1 / 1.15, lyingSizeRamps: { lie_down: [30, 60], wake_up: [70, 94] } };
+  assert.equal(L.displaySize('walk_loop', null, 5, cfg), 1);
+  assert.equal(L.displaySize(null, 'stand', 0, cfg), 1);
+  assert.equal(L.displaySize(null, 'sleep', 0, cfg), cfg.lyingSize);
+  assert.equal(L.displaySize('sleep_loop', null, 40, cfg), cfg.lyingSize);
+  // lie_down: full size while standing, lying size once down, smooth between.
+  assert.equal(L.displaySize('lie_down', null, 0, cfg), 1);
+  assert.equal(L.displaySize('lie_down', null, 120, cfg), cfg.lyingSize);
+  const mid = L.displaySize('lie_down', null, 45, cfg);
+  assert.ok(mid < 1 && mid > cfg.lyingSize);
+  // wake_up mirrors it, and its ends match sleep and stand exactly.
+  assert.equal(L.displaySize('wake_up', null, 0, cfg), cfg.lyingSize);
+  assert.equal(L.displaySize('wake_up', null, 120, cfg), 1);
+  // No step bigger than 2% between neighbouring frames.
+  for (const clip of ['lie_down', 'wake_up']) {
+    for (let i = 1; i < 121; i += 1) {
+      assert.ok(Math.abs(L.displaySize(clip, null, i, cfg) - L.displaySize(clip, null, i - 1, cfg)) < 0.02);
+    }
+  }
+});

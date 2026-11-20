@@ -77,7 +77,15 @@
     // Turning around: she narrows to this share of her width, flips, and
     // widens again, with a small hop (clip pixels).
     // The turn clip (turn.webm) plays this much faster than it was made.
-    turnClipRate: 1.6,
+    turnClipRate: 1.25,
+
+    // Her lying-down artwork (lie_down, sleep_loop, wake_up and the sleeping
+    // pose) is drawn about 15% bigger than her standing artwork, so she would
+    // grow as she lies down and shrink as she gets up. While she is down she
+    // is shown at lyingSize instead, easing in and out over these clip frames
+    // (anchored at her feet). The clip files themselves are untouched.
+    lyingSize: 1 / 1.15,
+    lyingSizeRamps: Object.freeze({ lie_down: Object.freeze([30, 60]), wake_up: Object.freeze([70, 94]) }),
     // Without a turn clip she uses a quick squash-and-flip instead:
     turnMs: 420,
     turnMinSquash: 0.08,

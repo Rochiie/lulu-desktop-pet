@@ -106,8 +106,8 @@
     },
     "turn": {
       "file": "turn.webm",
-      "frames": 100,
-      "seconds": 4.167,
+      "frames": 81,
+      "seconds": 3.375,
       "startPose": "stand",
       "endPose": "stand",
       "flipsFacing": true,

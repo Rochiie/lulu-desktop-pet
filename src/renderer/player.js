@@ -142,13 +142,15 @@
   }
 
   class Player {
-    constructor({ canvas, manifest, assetBase, view, mediaHost }) {
+    constructor({ canvas, manifest, assetBase, view, mediaHost, sizeFor = () => 1 }) {
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
       if (!this.ctx) throw new Error('2D canvas is not available');
       this.manifest = manifest;
       this.assetBase = assetBase;
       this.view = view; // () => ({ cx, dir, scale })
+      this.sizeFor = sizeFor; // (clip, pose, frameIndex) => display size factor
+      this.names = new Map(); // video or pose image -> { clip } / { pose }
       this.mediaHost = mediaHost;
       this.videos = new Map();
       this.poses = new Map();
@@ -179,12 +181,14 @@
         // decoding them and delivers frame callbacks.
         this.mediaHost.appendChild(video);
         this.videos.set(name, video);
+        this.names.set(video, { clip: name });
         jobs.push(waitForVideo(video, clip.file));
       }
       for (const [pose, file] of Object.entries(this.manifest.poses)) {
         const img = new Image();
         img.src = this.assetBase + file;
         this.poses.set(pose, img);
+        this.names.set(img, { pose });
         jobs.push(img.decode().catch((err) => {
           throw new Error(`Could not load ${file}: ${err.message}`);
         }));
@@ -430,6 +434,20 @@
       ctx.restore();
     }
 
+    // Display size of what is on screen now (see config.lyingSize).
+    displaySize() {
+      const src = this.source;
+      if (!src) return 1;
+      const who = this.names.get(src) || {};
+      let index = 0;
+      if (who.clip) {
+        index = this.active && this.active.video === src && this.active.lastIndex >= 0
+          ? this.active.lastIndex
+          : Math.round(src.currentTime * this.manifest.fps);
+      }
+      return this.sizeFor(who.clip || null, who.pose || null, index);
+    }
+
     _drawShadows(ctx) {
       const { cx, dir, scale } = this.view();
       const k = this.dpr * scale;
@@ -438,7 +456,8 @@
         const { back, front } = this.bodyExtent;
         const lift = this.effect ? this.effect.lift : 0;
         const centre = this.dpr * cx + dir * ((front - back) / 2) * k;
-        drawShadow(ctx, centre, groundY - 1.5 * k, (front + back) * 0.36 * k * (1 - lift / 40), 7.5 * k, 0.3 * (1 - lift / 25));
+        const size = this.displaySize();
+        drawShadow(ctx, centre, groundY - 1.5 * k, (front + back) * 0.36 * k * size * (1 - lift / 40), 7.5 * k, 0.3 * (1 - lift / 25));
       }
       if (this.prop && this.prop.eaten < 1 && performance.now() - this.prop.born > BONE_DROP_MS * 0.6) {
         drawShadow(ctx, this.dpr * this.prop.x, groundY - k, 30 * k * (1 - 0.6 * this.prop.eaten), 3.5 * k, 0.22);
@@ -467,8 +486,10 @@
         const k = this.dpr * scale;
         const squash = this.effect ? this.effect.squash : 1;
         const lift = this.effect ? this.effect.lift * k : 0;
+        const size = this.displaySize();
+        const keepFeetDown = k * this.manifest.groundY * (1 - size); // resize about her feet
         // Flip around her centre point so turning never shifts her sideways.
-        ctx.setTransform(k * dir * squash, 0, 0, k, this.dpr * cx, -lift);
+        ctx.setTransform(k * dir * squash * size, 0, 0, k * size, this.dpr * cx, keepFeetDown - lift);
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
       if (this.bowl) this._drawBowl(ctx); // in front of her, so her snout dips into it
@@ -572,10 +593,12 @@
       if (!source) return false;
       if (source instanceof HTMLVideoElement && source.readyState < HAVE_CURRENT_DATA) return false;
       const { cx, dir, scale } = view;
-      const { width, height, standingCenterX } = this.manifest;
-      const r = this.radius / scale;
-      const lx = (x - cx) / (dir * scale) + standingCenterX;
-      const ly = y / scale;
+      const size = view.size ?? 1;
+      const { width, height, standingCenterX, groundY } = this.manifest;
+      const k = scale * size;
+      const r = this.radius / k;
+      const lx = (x - cx) / (dir * k) + standingCenterX;
+      const ly = (y - scale * groundY * (1 - size)) / k;
       if (lx < -r || ly < -r || lx > width + r || ly > height + r) return false;
       const ctx = this.ctx;
       ctx.clearRect(0, 0, this.size, this.size);

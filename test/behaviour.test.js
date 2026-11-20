@@ -695,3 +695,12 @@ test('a missing trick clip is simply skipped', async () => {
     manifest.clips.play = saved;
   }
 });
+
+test('no spin before a nap straight after turning round', async () => {
+  const t = setup({ config: { weights: { nap: 1 }, spinBeforeNap: 1 } });
+  t.behaviour.lastPlayed = 'turn';
+  await t.player.next('lie_down');
+  t.stop();
+  const h = t.player.history;
+  assert.notEqual(h[h.lastIndexOf('lie_down') - 1], 'spin');
+});

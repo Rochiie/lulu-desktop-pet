@@ -40,7 +40,7 @@
         setInteractive(false);
         return;
       }
-      if (hitTester.hit(player.source, behaviour.view(), mouse.x, mouse.y)) over = 'lulu';
+      if (hitTester.hit(player.source, { ...behaviour.view(), size: player.displaySize() }, mouse.x, mouse.y)) over = 'lulu';
       else if (player.bowlHit(mouse.x, mouse.y)) over = 'bowl';
       else over = null;
       setInteractive(over !== null);
@@ -172,6 +172,7 @@
       assetBase: '../../assets/',
       mediaHost: document.getElementById('media'),
       view: () => (behaviour ? behaviour.view() : { cx: layout.width / 2, dir: 1, scale: layout.scale }),
+      sizeFor: (clip, pose, index) => window.LuluLogic.displaySize(clip, pose, index, config),
     });
     await player.load();
 
@@ -223,7 +224,11 @@
     api.onRunState((running) => behaviour.setRunning(running));
     api.onPrefs((next) => behaviour.setPrefs(next));
     api.onFollow((msg) => behaviour.setFollow(msg));
-    if (tune) setupTune({ behaviour, el: document.getElementById('tune') });
+    if (tune) {
+      setupTune({ behaviour, el: document.getElementById('tune') });
+      // Tune mode only: a handle for inspecting her from the developer tools.
+      window.__lulu = { behaviour, player };
+    }
 
     behaviour.start();
     api.ready();

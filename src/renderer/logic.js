@@ -121,6 +121,21 @@
     return NEUTRAL_MOOD;
   }
 
+  // Display size for a clip frame or pose (1 = as drawn). Lying-down artwork
+  // is shown at cfg.lyingSize; lie_down eases into it and wake_up out of it
+  // over the frame ranges in cfg.lyingSizeRamps.
+  function displaySize(clip, pose, index, cfg) {
+    if (pose === 'sleep' || clip === 'sleep_loop') return cfg.lyingSize;
+    const ramp = cfg.lyingSizeRamps[clip];
+    if (!ramp) return 1;
+    const [a, b] = ramp;
+    const t = clamp((index - a) / (b - a), 0, 1);
+    const eased = t * t * (3 - 2 * t);
+    const from = clip === 'wake_up' ? cfg.lyingSize : 1;
+    const to = clip === 'wake_up' ? 1 : cfg.lyingSize;
+    return from + (to - from) * eased;
+  }
+
   // Soften a mood: strength 0 = no effect (all multipliers 1), 1 = full.
   function scaleMood(mood, strength) {
     const soften = (m) => 1 + (m - 1) * strength;
@@ -267,6 +282,7 @@
   }
 
   return {
+    displaySize,
     bowlPlan,
     bowlRoute,
     treatPlan,

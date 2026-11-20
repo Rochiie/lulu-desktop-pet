@@ -10,7 +10,7 @@ const KEY_HI = 62; // green excess at or above: fully background
 const WATERMARK = { x: 0.85, y: 0.88 }; // bottom-right corner, as a share of the frame
 const STILL_TOL = 450; // mask pixels changed between frames that still count as "still"
 const BLEND_START = 4; // frames blended in from the exact start pose
-const BLEND_END = 6; // frames blended into the exact end pose
+const DEFAULT_BLEND_END = 6; // frames blended into the exact end pose
 
 const log = (s) => ipcRenderer.invoke('log', s);
 
@@ -65,6 +65,21 @@ const mask = (data) => {
   return m;
 };
 const diff = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) n += a[i] ^ b[i]; return n; };
+// Best match when b is slid sideways by up to ±range pixels: { iou, shift }.
+function iouShifted(a, b, range) {
+  let best = { iou: -1, shift: 0 };
+  for (let s = -range; s <= range; s += 1) {
+    let i2 = 0, u = 0;
+    for (let y = 0; y < OUT_H; y++) for (let x = 0; x < OUT_W; x++) {
+      const k = y * OUT_W + x; const xs = x + s;
+      const av = a[k]; const bv = xs >= 0 && xs < OUT_W ? b[y * OUT_W + xs] : 0;
+      i2 += av & bv; u += av | bv;
+    }
+    const v = u ? i2 / u : 1;
+    if (v > best.iou) best = { iou: v, shift: -s };
+  }
+  return best;
+}
 const iou = (a, b) => { let i2 = 0, u = 0; for (let i = 0; i < a.length; i++) { i2 += a[i] & b[i]; u += a[i] | b[i]; } return u ? i2 / u : 1; };
 const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
@@ -86,7 +101,8 @@ function blend(frame, ref, w) {
 }
 
 (async () => {
-  const { video: file, startRef, endRef } = await ipcRenderer.invoke('job');
+  const { video: file, startRef, endRef, from, to, zoom, zoomFrom, zoomTo, blendEnd, minMatch, dryRun } = await ipcRenderer.invoke('job');
+  const BLEND_END = blendEnd ?? DEFAULT_BLEND_END;
   const video = document.createElement('video');
   video.muted = true; video.preload = 'auto'; video.src = pathToFileURL(file).href;
   await new Promise((resolve, reject) => {
@@ -94,9 +110,14 @@ function blend(frame, ref, w) {
     video.addEventListener('error', () => reject(new Error('Chromium could not decode the video')), { once: true });
   });
   const W = video.videoWidth, H = video.videoHeight;
-  const frames = Math.round(video.duration * FPS);
+  const total = Math.round(video.duration * FPS);
+  const first = from ?? 0;
+  const lastSrc = Math.min(total - 1, to ?? total - 1);
+  if (lastSrc <= first) throw new Error('--to must be after --from');
+  const frames = lastSrc - first + 1; // frames are numbered from --from onwards
+  const srcFrame = (i) => first + i;
   const seek = async (i) => {
-    video.currentTime = (i + 0.5) / FPS;
+    video.currentTime = (srcFrame(i) + 0.5) / FPS;
     await new Promise((r) => video.addEventListener('seeked', r, { once: true }));
   };
   const keyed = async (i) => { await seek(i); return key(imageData(video, W, H), W, H); };
@@ -112,13 +133,16 @@ function blend(frame, ref, w) {
   for (let i = 0; i < frames; i++) boxes.push(bbox(await keyed(i), W, H, 40));
   const fit = (v, r) => ((r.maxX - r.minX + 1) / (v.maxX - v.minX + 1) + (r.maxY - r.minY + 1) / (v.maxY - v.minY + 1)) / 2;
   const s0 = fit(boxes[0], rs);
-  const s1 = fit(boxes[frames - 1], re);
+  const s1 = zoom ? fit(boxes[frames - 1], re) : s0;
   const tx0 = rs.minX - boxes[0].minX * s0;
-  const tx1 = re.minX - boxes[frames - 1].minX * s1;
+  // Without zoom correction she keeps her start position as well as her size.
+  const tx1 = zoom ? re.minX - boxes[frames - 1].minX * s1 : tx0;
   const differs = (p, q) => Math.abs(p.minX - q.minX) + Math.abs(p.maxX - q.maxX) > 6;
   let za = 0; while (za < frames - 1 && !differs(boxes[za], boxes[0])) za++;
   let zb = frames - 1; while (zb > 0 && !differs(boxes[zb], boxes[frames - 1])) zb--;
-  await log(`${W}x${H}, ${frames} frames; camera zoom over the clip x${(s0 / s1).toFixed(3)} (corrected between frames ${za} and ${zb})`);
+  if (zoomFrom !== null && zoomFrom !== undefined) za = Math.max(0, zoomFrom - first);
+  if (zoomTo !== null && zoomTo !== undefined) zb = Math.min(frames - 1, zoomTo - first);
+  await log(`${W}x${H}, ${frames} frames; camera zoom over the clip x${(s0 / s1).toFixed(3)} (corrected between source frames ${srcFrame(za)} and ${srcFrame(zb)})`);
 
   const transformFor = (i) => {
     const t = smooth((i - za) / Math.max(1, zb - za));
@@ -156,9 +180,15 @@ function blend(frame, ref, w) {
   if (kept < BLEND_START + BLEND_END + 4) throw new Error(`Only ${kept} moving frames found`);
   const startMatch = iou(masks[start], mask(refStart));
   const endMatch = iou(masks[end], mask(refEnd));
-  await log(`kept frames ${start}..${end} (${kept} frames, ${(kept / FPS).toFixed(2)} s)`);
+  await log(`kept source frames ${srcFrame(start)}..${srcFrame(end)} (${kept} frames, ${(kept / FPS).toFixed(2)} s)`);
   await log(`match with her pose before blending: start ${(startMatch * 100).toFixed(1)}%, end ${(endMatch * 100).toFixed(1)}%`);
-  if (startMatch < 0.85 || endMatch < 0.85) {
+  const slid = iouShifted(masks[end], mask(refEnd), 120);
+  await log(`end pose if slid sideways: ${(slid.iou * 100).toFixed(1)}% with her ${slid.shift} px from where the pose is`);
+  if (dryRun) {
+    await ipcRenderer.invoke('done', { frames: kept, startMatch, endMatch });
+    return;
+  }
+  if (startMatch < minMatch || endMatch < minMatch) {
     throw new Error('The first or last frame is too different from her standing pose to join seamlessly');
   }
 
