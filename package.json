@@ -43,7 +43,7 @@
         "provider": "github",
         "owner": "Rochiie",
         "repo": "lulu-desktop-pet",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ]
   },
