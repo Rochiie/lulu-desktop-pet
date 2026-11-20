@@ -47,6 +47,7 @@ class FakePlayer {
 
   setProp(prop) {
     this.prop = prop ? { ...prop, eaten: 0 } : null;
+    if (prop) (this.boneDrops = this.boneDrops || []).push(this.history.length);
   }
 
   setPropEaten(amount) {
@@ -195,6 +196,14 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
       ...globalThis.LuluConfig,
       holdSeconds: [0.001, 0.002],
       napSeconds: [0.05, 0.1],
+      // Tricks are off unless a test turns them on, so older tests keep
+      // checking exactly what they were written for.
+      trickWeights: {},
+      headTiltShare: 0,
+      rollOverShare: 0,
+      pawShare: 0,
+      spinBeforeNap: 0,
+      begForTreats: false,
       ...config,
     },
     api,
@@ -624,5 +633,65 @@ test('without a turn clip she falls back to the quick squash-and-flip', async ()
     assert.deepEqual(t.errors, []);
   } finally {
     manifest.clips.turn = saved;
+  }
+});
+
+test('tricks join her random actions, and never twice in a row', async () => {
+  const t = setup({ config: { weights: { look: 1 }, trickWeights: { head_tilt: 1, play: 1, roll_over: 1, paw: 1, beg: 1 } } });
+  await until(() => t.player.history.length >= 60);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const h = t.player.history;
+  for (const trick of ['head_tilt', 'play', 'roll_over', 'paw', 'beg']) assert.ok(h.includes(trick), `never did ${trick}`);
+  for (let i = 1; i < h.length; i += 1) assert.notEqual(h[i], h[i - 1], `repeat at ${i}: ${h[i]}`);
+});
+
+test('noticing you can be a head tilt; petting a roll-over; a click a paw', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 }, headTiltShare: 1, rollOverShare: 1, pawShare: 1 } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.notice();
+  await t.player.next('head_tilt');
+  t.behaviour.pet();
+  await t.player.next('roll_over');
+  t.behaviour.click();
+  await t.player.next('paw');
+  t.stop();
+  assert.deepEqual(t.errors, []);
+});
+
+test('she spins around before lying down for a nap', async () => {
+  const t = setup({ config: { weights: { nap: 1 }, spinBeforeNap: 1 } });
+  await t.player.next('lie_down');
+  t.stop();
+  const h = t.player.history;
+  assert.equal(h[h.lastIndexOf('lie_down') - 1], 'spin');
+});
+
+test('for a treat she begs first, then the bone drops and she eats it', async () => {
+  const t = setup({ config: { weights: { sit: 1 }, begForTreats: true }, layout: makeLayout(1, 3000), xFraction: 0.2 });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.command('treat', { x: 2000 });
+  assert.ok(!t.player.prop, 'no bone until she has begged');
+  await until(() => t.player.history.slice(before).includes('happy') && !t.player.prop, 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  // The bone dropped only after the beg clip had started (and finished).
+  const begAt = t.player.history.indexOf('beg', before);
+  assert.ok(t.player.boneDrops.length === 1 && t.player.boneDrops[0] > begAt);
+  assert.match(t.player.history.slice(before).join(' '), /beg .*walk_start .*sniff happy/);
+});
+
+test('a missing trick clip is simply skipped', async () => {
+  const saved = manifest.clips.play;
+  delete manifest.clips.play;
+  try {
+    const t = setup({ config: { weights: { look: 1 }, trickWeights: { play: 100 } } });
+    await until(() => t.player.history.length >= 10);
+    t.stop();
+    assert.deepEqual(t.errors, []);
+    assert.equal(t.player.history.includes('play'), false);
+  } finally {
+    manifest.clips.play = saved;
   }
 });

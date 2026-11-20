@@ -571,6 +571,7 @@ function registerTuneShortcuts() {
     'CommandOrControl+Alt+-': { delta: -0.05 },
     'CommandOrControl+Alt+W': { walk: true },
     'CommandOrControl+Alt+S': { save: true },
+    'CommandOrControl+Alt+K': { trick: true },
   };
   for (const [accelerator, payload] of Object.entries(keys)) {
     if (!globalShortcut.register(accelerator, () => send('lulu:tune', payload))) {

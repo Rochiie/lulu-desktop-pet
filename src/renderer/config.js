@@ -10,6 +10,16 @@
     // besides walking.
     weights: Object.freeze({ walk: 32, look: 30, sniff: 12, sit: 10, stretch: 8, nap: 8 }),
 
+    // Tricks (extra clips). Each is used only if its clip is in the manifest.
+    // trickWeights join the random actions above; the shares below are how
+    // often a trick replaces the usual reaction.
+    trickWeights: Object.freeze({ head_tilt: 6, play: 6, roll_over: 3, paw: 3, beg: 2 }),
+    headTiltShare: 0.4, // noticing you: head tilt instead of a look
+    rollOverShare: 0.35, // petting: roll over for a belly rub instead of a wag
+    pawShare: 0.3, // clicking her: offer a paw instead of a wag
+    spinBeforeNap: 0.7, // turn a circle before lying down
+    begForTreats: true, // beg first when you give her a treat
+
     // Moods through the day. weights multiply the action weights above; hold
     // and nap multiply how long she stands still and how long she naps.
     moods: Object.freeze([

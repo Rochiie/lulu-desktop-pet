@@ -131,7 +131,7 @@
   function setupTune({ behaviour, el }) {
     const render = () => {
       el.textContent = `Tune mode · walk pace ${Math.round(behaviour.pace * 100)}% · `
-        + 'Ctrl+Alt+= faster · Ctrl+Alt+- slower · Ctrl+Alt+W walk · Ctrl+Alt+T treat · Ctrl+Alt+F follow · Ctrl+Alt+S save';
+        + 'Ctrl+Alt+= faster · Ctrl+Alt+- slower · Ctrl+Alt+W walk · Ctrl+Alt+T treat · Ctrl+Alt+F follow · Ctrl+Alt+K trick · Ctrl+Alt+S save';
     };
     el.hidden = false;
     render();
@@ -141,6 +141,8 @@
         render();
       } else if (msg.walk) {
         behaviour.command('walk');
+      } else if (msg.trick) {
+        behaviour.nextTrick();
       } else if (msg.save) {
         api.saveWalkPace(behaviour.pace);
         el.textContent = `Saved: walk pace ${Math.round(behaviour.pace * 100)}%`;

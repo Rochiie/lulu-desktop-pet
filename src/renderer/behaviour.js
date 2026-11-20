@@ -12,6 +12,7 @@
   const Interrupt = root.LuluInterrupt;
 
   const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat']);
+  const TRICKS = Object.freeze(['head_tilt', 'play', 'roll_over', 'paw', 'beg', 'spin']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
@@ -181,6 +182,23 @@
       }
     }
 
+    hasClip(name) {
+      return Boolean(this.manifest.clips[name]);
+    }
+
+    // Tune mode: do the next trick in the list (for trying them out).
+    nextTrick() {
+      const available = TRICKS.filter((trick) => this.hasClip(trick));
+      if (!available.length) return;
+      this.trickIndex = ((this.trickIndex ?? -1) + 1) % available.length;
+      this.request(available[this.trickIndex]);
+    }
+
+    // Sometimes swap a reaction for a trick (when that trick's clip exists).
+    maybeTrick(trick, share, usual) {
+      return this.hasClip(trick) && this.rng() < share ? trick : usual;
+    }
+
     // Body edges in window pixels: [left, right].
     body() {
       const e = this.extents();
@@ -247,15 +265,16 @@
     }
 
     click() {
-      this.request('happy');
+      this.request(this.maybeTrick('paw', this.config.pawShare, 'happy'));
     }
 
     command(name, args = {}) {
       if (!COMMANDS.has(name)) throw new Error(`Unknown command: ${name}`);
       if (name === 'come' || name === 'treat') {
         if (!Number.isFinite(args.x)) throw new Error(`${name} needs an x position`);
-        if (name === 'treat') this.dropTreat(args.x);
-        else this.request('come', { x: args.x });
+        if (name === 'come') this.request('come', { x: args.x });
+        else if (this.config.begForTreats && this.hasClip('beg')) this.request('beg_treat', { x: args.x });
+        else this.dropTreat(args.x);
         return;
       }
       this.request(name);
@@ -269,7 +288,7 @@
       const now = Date.now();
       if (now - this.lastNotice < this.config.noticeCooldownMs) return;
       this.lastNotice = now;
-      this.request('look');
+      this.request(this.maybeTrick('head_tilt', this.config.headTiltShare, 'look'));
     }
 
     // Is window x within noticeRadiusPx of her body (not her centre)?
@@ -309,7 +328,7 @@
     // Drop a bone as close to window x as possible, at a spot she can walk to
     // and eat from exactly. (If she is mid-walk, her stopping point is not
     // known yet, so it lands at x and is lined up when she sets off.)
-    dropTreat(x) {
+    dropTreat(x, { queue = true } = {}) {
       const edge = 30 * this.layout.scale;
       let bx = L.clamp(x, edge, this.layout.width - edge);
       if (!this.walk) {
@@ -318,7 +337,7 @@
       }
       this.treat = { x: bx };
       this.player.setProp({ kind: 'bone', x: bx });
-      this.request('treat');
+      if (queue) this.request('treat');
     }
 
     clearTreat() {
@@ -402,6 +421,9 @@
     weightsFor(mood) {
       const base = { ...this.config.weights, look: this.config.weights.look * this.prefs.lookMultiplier };
       if (this.prefs.waterBowl) base.drink = this.config.drinkWeight;
+      for (const [trick, weight] of Object.entries(this.config.trickWeights)) {
+        if (this.hasClip(trick)) base[trick] = weight;
+      }
       return L.applyMood(base, mood);
     }
 
@@ -449,7 +471,7 @@
       }
       if (now - this.lastPet < this.config.petCooldownMs) return;
       this.lastPet = now;
-      this.request('happy');
+      this.request(this.maybeTrick('roll_over', this.config.rollOverShare, 'happy'));
     }
 
     // ------------------------------------------------------------ control flow
@@ -573,6 +595,12 @@
     }
 
     async perform(type, req = {}) {
+      if (TRICKS.includes(type)) {
+        if (!this.hasClip(type)) return; // that trick's clip is not installed
+        this.lastAction = type;
+        await this.playClip(type);
+        return;
+      }
       switch (type) {
         case 'walk':
           if (await this.doWalk()) this.lastAction = 'walk';
@@ -585,6 +613,13 @@
           return;
         case 'drink':
           if (this.prefs.waterBowl) await this.drink();
+          return;
+        case 'beg_treat':
+          // Beg, then the bone drops near where you asked, and she eats it.
+          this.lastAction = 'beg';
+          await this.playClip('beg');
+          this.dropTreat(req.x, { queue: false });
+          await this.eatTreat();
           return;
         case 'nap':
           this.lastAction = 'nap';
@@ -614,6 +649,7 @@
       const [lo, hi] = this.config.napSeconds;
       const napScale = this.tune ? 1 : this.mood().nap;
       this.napEnds = Date.now() + L.randRange(this.rng, lo, hi) * napScale * 1000;
+      if (this.hasClip('spin') && this.rng() < this.config.spinBeforeNap) await this.playClip('spin');
       await this.playClip('lie_down');
     }
 

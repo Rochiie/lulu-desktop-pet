@@ -92,6 +92,21 @@ Running needs a start, a repeating loop and a stop, like her walk:
 - `run_stop` (about 1.5 seconds). Last frame: `stand_facing_right_on_green.png`.
   > The dog slows from a gallop to a stop and stands still.
 
+## Turning a video into a Lulu clip
+
+From the project folder (needs ffmpeg: `winget install Gyan.FFmpeg`):
+
+```
+npm run make-clip -- "C:\path\to\video.mp4" clip_name
+npm run make-clip -- "C:\path\to\turn.mp4" turn --ends-facing left
+```
+
+It removes the green background and the watermark, lines her up with her
+standing pose, undoes any camera zoom, trims the still frames, blends the ends
+into her exact poses, writes `assets/clip_name.webm`, and prints the manifest
+entry to add. It refuses a video whose first or last frame is too different
+from her standing pose to join seamlessly.
+
 ## Tips
 
 - If your tool can only take a first frame, make the clip a bit longer than needed. I can find

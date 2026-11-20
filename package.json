@@ -1,7 +1,7 @@
 {
   "name": "lulu-desktop-pet",
   "productName": "Lulu",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Lulu the miniature dachshund, living on your Windows desktop.",
   "author": "Cody",
   "license": "UNLICENSED",
@@ -12,7 +12,8 @@
     "tune": "electron . --tune",
     "test": "node --test --test-timeout=30000 \"test/*.test.js\"",
     "dist": "electron-builder --win nsis --publish never",
-    "release": "node scripts/release.js"
+    "release": "node scripts/release.js",
+    "make-clip": "electron tools/make-clip/main.js"
   },
   "build": {
     "appId": "com.cody.lulu",

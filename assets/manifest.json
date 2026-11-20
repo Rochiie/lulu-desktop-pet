@@ -113,6 +113,60 @@
       "flipsFacing": true,
       "use": "one-shot: turns around on the spot; ends facing the other way (facing left when drawn unflipped)",
       "loop": false
+    },
+    "spin": {
+      "file": "spin.webm",
+      "frames": 69,
+      "seconds": 2.875,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: turns a full circle on the spot (before lying down)",
+      "loop": false
+    },
+    "head_tilt": {
+      "file": "head_tilt.webm",
+      "frames": 63,
+      "seconds": 2.625,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: turns her head to you and tilts it",
+      "loop": false
+    },
+    "beg": {
+      "file": "beg.webm",
+      "frames": 113,
+      "seconds": 4.708,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: sits up and begs (before a treat)",
+      "loop": false
+    },
+    "paw": {
+      "file": "paw.webm",
+      "frames": 115,
+      "seconds": 4.792,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: sits and offers a paw",
+      "loop": false
+    },
+    "roll_over": {
+      "file": "roll_over.webm",
+      "frames": 115,
+      "seconds": 4.792,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: rolls onto her back for a belly rub",
+      "loop": false
+    },
+    "play": {
+      "file": "play.webm",
+      "frames": 110,
+      "seconds": 4.583,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: play-bow and playful nudging",
+      "loop": false
     }
   },
   "notes": "All clips: transparent VP9 WebM (alpha), 24fps, same canvas size and same ground line, Lulu facing right. Flip horizontally for left-facing.",
