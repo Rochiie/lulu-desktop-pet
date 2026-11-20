@@ -162,6 +162,14 @@ function makeLayout(seq, width, edges = { left: false, right: false }, reason = 
 }
 
 const NOON = () => new Date(2026, 0, 1, 12, 0, 0);
+
+// Every Lulu a test starts is stopped afterwards, even if the test fails, so
+// a failure can never leave her running and keep the test process alive.
+const running = new Set();
+test.afterEach(() => {
+  for (const stop of running) stop();
+  running.clear();
+});
 const PREFS = {
   walkPace: 1, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
   followSeconds: 60, noticeMouse: true, walkIn: true,
@@ -198,6 +206,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
   behaviour.start();
   behaviour.setRunning(true);
   const stop = () => behaviour.setRunning(false);
+  running.add(stop);
   return { player, behaviour, api, errors, positions, stop };
 }
 
@@ -565,8 +574,10 @@ test('the water bowl: she walks over and drinks with her nose exactly in it', as
     const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 2560), xFraction: x0, prefs: { waterBowl: true, bowlX } });
     await until(() => t.player.history.length >= 1);
     const before = t.player.history.length;
+    // She may already have had a drink of her own accord; count from here.
+    const drinksBefore = t.player.drinks || 0;
     t.behaviour.request('drink');
-    await until(() => t.player.drinks === 1 && !t.player.playing, 8000);
+    await until(() => (t.player.drinks || 0) > drinksBefore && !t.player.playing && !t.player.turning, 8000);
     t.stop();
     assert.deepEqual(t.errors, []);
     const bowl = t.player.bowl.x;

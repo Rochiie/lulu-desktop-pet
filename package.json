@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "tune": "electron . --tune",
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test --test-timeout=30000 \"test/*.test.js\"",
     "dist": "electron-builder --win nsis --publish never",
     "release": "node scripts/release.js"
   },

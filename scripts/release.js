@@ -80,7 +80,7 @@ function main() {
   }
 
   console.log(`\nTesting ${tag}…`);
-  run(process.execPath, ['--test', 'test/*.test.js']);
+  run(process.execPath, ['--test', '--test-timeout=30000', 'test/*.test.js']);
 
   console.log(`\nTagging and pushing ${tag}…`);
   if (!out('git', ['tag', '--list', tag])) run('git', ['tag', tag]);
