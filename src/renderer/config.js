@@ -34,6 +34,15 @@
     // front of her centre (measured from sniff.webm around 2–2.5 s), and the
     // bone is "eaten" between these clip times (s).
     treatNoseReach: 223,
+
+    // Water bowl: she gets thirsty after walking this far (clip pixels, about
+    // 15 walk cycles), and sometimes just fancies a drink (weight below). To
+    // land exactly at the bowl she may stretch or shorten her stride within
+    // strideRange for that walk. The bowl stays this far from screen edges.
+    thirstClipPx: 5000,
+    drinkWeight: 5,
+    strideRange: [0.88, 1.12],
+    bowlEdgePx: 40,
     treatEatFrom: 1.6,
     treatEatTo: 2.7,
     // Walk cycles per walk. Her real stride is long (about 322 px per cycle

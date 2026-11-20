@@ -21,6 +21,7 @@ const RANGES = Object.freeze({
   lookMultiplier: Object.freeze([0.25, 2]), // how often she looks at you, x normal
   moodStrength: Object.freeze([0, 1]), // 0 = same all day, 1 = full daily rhythm
   followSeconds: Object.freeze([30, 300]), // how long "Follow me" lasts
+  bowlX: Object.freeze([0, 1]), // where her water bowl sits, as a share of the screen width
 });
 
 const DEFAULTS = Object.freeze({
@@ -37,12 +38,16 @@ const DEFAULTS = Object.freeze({
   followSeconds: 60,
   noticeMouse: true,
   walkIn: true,
+  waterBowl: true,
+  bowlX: 0.85,
+  shadow: true,
 });
 
 // Settings the user can change in the Settings window (and reset).
 const USER_KEYS = Object.freeze([
   'size', 'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'walkPace',
   'tripChance', 'lookMultiplier', 'moodStrength', 'followSeconds', 'noticeMouse', 'walkIn',
+  'waterBowl', 'shadow',
 ]);
 
 const SAVE_DELAY_MS = 500;
@@ -51,7 +56,7 @@ function sanitize(raw) {
   const out = { ...DEFAULTS };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   if (SIZE_OPTIONS.some((o) => o.value === raw.size)) out.size = raw.size;
-  for (const key of ['startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'noticeMouse', 'walkIn']) {
+  for (const key of ['startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'noticeMouse', 'walkIn', 'waterBowl', 'shadow']) {
     if (typeof raw[key] === 'boolean') out[key] = raw[key];
   }
   for (const [key, [lo, hi]] of Object.entries(RANGES)) {
@@ -75,6 +80,9 @@ function prefsFor(values) {
     followSeconds: values.followSeconds,
     noticeMouse: values.noticeMouse,
     walkIn: values.walkIn,
+    waterBowl: values.waterBowl,
+    bowlX: values.bowlX,
+    shadow: values.shadow,
   };
 }
 

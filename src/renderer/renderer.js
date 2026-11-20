@@ -13,6 +13,7 @@
   // (forwarding moves to us) until the cursor is over one of her pixels.
   function setupPointer({ canvas, player, behaviour, hitTester, config }) {
     let interactive = false;
+    let over = null; // 'lulu' | 'bowl' | null
     let mouse = null;
     let drag = null;
     let lastCheck = 0;
@@ -39,7 +40,10 @@
         setInteractive(false);
         return;
       }
-      setInteractive(hitTester.hit(player.source, behaviour.view(), mouse.x, mouse.y));
+      if (hitTester.hit(player.source, behaviour.view(), mouse.x, mouse.y)) over = 'lulu';
+      else if (player.bowlHit(mouse.x, mouse.y)) over = 'bowl';
+      else over = null;
+      setInteractive(over !== null);
     };
 
     const scheduleCheck = () => {
@@ -52,9 +56,11 @@
       const dx = event.clientX - drag.startX;
       if (!drag.moved && Math.abs(dx) > config.dragThresholdPx) {
         drag.moved = true;
-        behaviour.beginDrag();
+        if (drag.kind === 'lulu') behaviour.beginDrag();
       }
-      if (drag.moved) behaviour.dragTo(drag.startCx + dx);
+      if (!drag.moved) return;
+      if (drag.kind === 'lulu') behaviour.dragTo(drag.startX0 + dx);
+      else behaviour.moveBowl(drag.startX0 + dx);
     };
 
     const endPointer = (event, cancelled) => {
@@ -62,8 +68,14 @@
       const finished = drag;
       drag = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      if (finished.moved) behaviour.endDrag();
-      else if (!cancelled) behaviour.click();
+      if (finished.kind === 'bowl') {
+        if (finished.moved) api.saveBowl(behaviour.prefs.bowlX);
+        else if (!cancelled) behaviour.request('drink'); // clicking her bowl sends her for a drink
+      } else if (finished.moved) {
+        behaviour.endDrag();
+      } else if (!cancelled) {
+        behaviour.click();
+      }
       scheduleCheck();
     };
 
@@ -76,7 +88,7 @@
       // The mouse coming near her: she notices and looks up at you.
       if (behaviour.isNear(event.clientX)) behaviour.notice();
       // Rubbing over her with no button held is petting.
-      if (interactive && event.buttons === 0) {
+      if (over === 'lulu' && event.buttons === 0) {
         if (rub.move(event.clientX, event.timeStamp)) behaviour.pet();
       } else {
         rub.reset();
@@ -88,15 +100,16 @@
       if (!drag) scheduleCheck();
     });
     canvas.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || !interactive) return;
-      drag = { id: event.pointerId, startX: event.clientX, startCx: behaviour.cx, moved: false };
+      if (event.button !== 0 || !interactive || over === null) return;
+      const startX0 = over === 'lulu' ? behaviour.cx : player.bowl.x;
+      drag = { kind: over, id: event.pointerId, startX: event.clientX, startX0, moved: false };
       canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener('pointerup', (event) => endPointer(event, false));
     canvas.addEventListener('pointercancel', (event) => endPointer(event, true));
     window.addEventListener('contextmenu', (event) => {
       event.preventDefault();
-      if (interactive && !drag) api.showMenu();
+      if (over === 'lulu' && !drag) api.showMenu();
     });
 
     // She may walk under a still cursor, so re-test after each drawn frame.
@@ -108,6 +121,7 @@
       // After the window moves, start from "ignore the mouse" and re-test.
       reset() {
         interactive = true;
+        over = null;
         setInteractive(false);
         scheduleCheck();
       },
@@ -186,10 +200,12 @@
       threshold: config.alphaThreshold,
       radiusPx: config.hitRadiusPx,
     });
+    player.bodyExtent = player.bodyExtents(config.alphaThreshold);
     pointer = setupPointer({ canvas, player, behaviour, hitTester, config });
 
     prepareLayout(layout);
     behaviour.applyLayout(layout, { xFraction: settings.xFraction });
+    behaviour.setPrefs(prefs); // draws her bowl and shadow
     // Walk in from the side at start-up, rather than popping into view.
     if (prefs.walkIn && !tune) behaviour.walkInTo(behaviour.cx);
 

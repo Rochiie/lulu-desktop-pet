@@ -57,6 +57,19 @@ class FakePlayer {
     if (this.prop) this.prop.x = x;
   }
 
+  setShadows(on) {
+    this.shadows = on;
+  }
+
+  setBowl(bowl) {
+    this.bowl = bowl ? { x: bowl.x, drinking: false } : null;
+  }
+
+  setBowlDrinking(drinking) {
+    if (this.bowl) this.bowl.drinking = drinking;
+    if (drinking) this.drinks = (this.drinks || 0) + 1;
+  }
+
   endLoop() {
     if (this.active) this.active.loop = false;
   }
@@ -152,6 +165,7 @@ const NOON = () => new Date(2026, 0, 1, 12, 0, 0);
 const PREFS = {
   walkPace: 1, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
   followSeconds: 60, noticeMouse: true, walkIn: true,
+  waterBowl: false, bowlX: 0.85, shadow: true,
 };
 
 function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null, clock = NOON, prefs = {} } = {}) {
@@ -180,6 +194,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
     clock,
   });
   behaviour.applyLayout(layout, { xFraction });
+  behaviour.setPrefs(behaviour.prefs);
   behaviour.start();
   behaviour.setRunning(true);
   const stop = () => behaviour.setRunning(false);
@@ -542,4 +557,41 @@ test('a treat on another screen: she walks in from the side to eat it', async ()
   assert.match(h, /walk_start .*walk_stop .*sniff happy/);
   const nose = t.behaviour.cx - globalThis.LuluConfig.treatNoseReach; // facing left
   assert.ok(Math.abs(nose - 1200) <= D_LOOP / 2 + 1, `nose at ${nose}, wanted ~1200`);
+});
+
+test('the water bowl: she walks over and drinks with her nose exactly in it', async () => {
+  const reach = globalThis.LuluConfig.treatNoseReach;
+  for (const [x0, bowlX] of [[0.15, 0.85], [0.8, 0.3], [0.5, 0.55]]) {
+    const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 2560), xFraction: x0, prefs: { waterBowl: true, bowlX } });
+    await until(() => t.player.history.length >= 1);
+    const before = t.player.history.length;
+    t.behaviour.request('drink');
+    await until(() => t.player.drinks === 1 && !t.player.playing, 8000);
+    t.stop();
+    assert.deepEqual(t.errors, []);
+    const bowl = t.player.bowl.x;
+    const nose = t.behaviour.cx + t.behaviour.dir * reach;
+    assert.ok(Math.abs(nose - bowl) < 0.5, `start ${x0}: nose ${nose.toFixed(1)}, bowl ${bowl.toFixed(1)}`);
+    assert.match(t.player.history.slice(before).join(' '), /sniff/);
+  }
+});
+
+test('she gets thirsty after a lot of walking and goes for a drink', async () => {
+  const t = setup({ config: { weights: { walk: 1 }, thirstClipPx: 1500 }, layout: makeLayout(1, 2560), prefs: { waterBowl: true, bowlX: 0.5 } });
+  await until(() => (t.player.drinks || 0) >= 1, 15000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.ok(t.behaviour.thirst < 1500);
+});
+
+test('the bowl can be moved and switched off', () => {
+  const t = setup({ layout: makeLayout(1, 2000), prefs: { waterBowl: true, bowlX: 0.5 } });
+  t.stop();
+  assert.equal(t.player.bowl.x, 1000);
+  t.behaviour.moveBowl(99999);
+  assert.equal(t.player.bowl.x, 2000 - globalThis.LuluConfig.bowlEdgePx); // kept on screen
+  t.behaviour.setPrefs({ ...t.behaviour.prefs, waterBowl: false });
+  assert.equal(t.player.bowl, null);
+  t.behaviour.setPrefs({ ...t.behaviour.prefs, shadow: false });
+  assert.equal(t.player.shadows, false);
 });

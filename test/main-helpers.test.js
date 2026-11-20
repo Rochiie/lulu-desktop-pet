@@ -120,3 +120,11 @@ test('new preferences have safe ranges and defaults', () => {
   // Old settings files with the retired px/s walkSpeed still load cleanly.
   assert.equal('walkSpeed' in sanitize({ walkSpeed: 110 }), false);
 });
+
+test('bowl and shadow settings', () => {
+  assert.equal(DEFAULTS.waterBowl, true);
+  assert.equal(DEFAULTS.shadow, true);
+  const v = sanitize({ waterBowl: false, shadow: false, bowlX: 0.2 });
+  assert.deepEqual([v.waterBowl, v.shadow, v.bowlX], [false, false, 0.2]);
+  assert.equal(sanitize({ bowlX: 3 }).bowlX, DEFAULTS.bowlX);
+});

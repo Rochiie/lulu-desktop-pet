@@ -6,7 +6,7 @@
   const api = window.luluSettings;
   const $ = (id) => document.getElementById(id);
   const SLIDERS = ['lookMultiplier', 'moodStrength', 'walkPace', 'tripChance', 'followSeconds'];
-  const SWITCHES = ['noticeMouse', 'walkBetweenScreens', 'walkIn', 'avoidFullscreen', 'startWithWindows'];
+  const SWITCHES = ['noticeMouse', 'walkBetweenScreens', 'walkIn', 'avoidFullscreen', 'waterBowl', 'shadow', 'startWithWindows'];
   const SEND_DELAY_MS = 120;
 
   let view = null;

@@ -11,6 +11,7 @@
   const LOAD_TIMEOUT_MS = 20000;
   const HAVE_CURRENT_DATA = 2;
   const BONE_DROP_MS = 700;
+  const BOWL_SCALE = 1.25; // bowl drawing units per clip pixel
   // The next clip needs a few ms to show its first frame; start it this much early.
   const HANDOVER_LEAD_MS = 6;
 
@@ -22,6 +23,66 @@
     if (t < 2 / d) return n * (t -= 1.5 / d) * t + 0.75;
     if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + 0.9375;
     return n * (t -= 2.625 / d) * t + 0.984375;
+  }
+
+  // A soft oval shadow centred on (cx, cy) with radii rx, ry (device pixels).
+  function drawShadow(ctx, cx, cy, rx, ry, alpha) {
+    if (rx <= 0 || ry <= 0 || alpha <= 0) return;
+    ctx.save();
+    ctx.setTransform(rx, 0, 0, ry, cx, cy);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    g.addColorStop(0, `rgba(0, 0, 0, ${alpha})`);
+    g.addColorStop(0.55, `rgba(0, 0, 0, ${alpha * 0.55})`);
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Lulu's water bowl, base centred on (0, 0), about 50 x 18 units tall.
+  // ripple: 0..1 how much the water is moving (she is drinking).
+  function drawBowl(ctx, ripple) {
+    // Body: a tapered bowl.
+    ctx.beginPath();
+    ctx.moveTo(-25, -15);
+    ctx.lineTo(25, -15);
+    ctx.lineTo(19.5, -1.5);
+    ctx.quadraticCurveTo(19, 0, 17, 0);
+    ctx.lineTo(-17, 0);
+    ctx.quadraticCurveTo(-19, 0, -19.5, -1.5);
+    ctx.closePath();
+    const body = ctx.createLinearGradient(-25, 0, 25, 0);
+    body.addColorStop(0, '#8e3a2c');
+    body.addColorStop(0.35, '#c4553f');
+    body.addColorStop(0.6, '#b34a37');
+    body.addColorStop(1, '#7f3326');
+    ctx.fillStyle = body;
+    ctx.fill();
+    // A little paw print on the front.
+    ctx.fillStyle = 'rgba(255, 228, 210, 0.55)';
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 3, 2.4, 0, 0, Math.PI * 2);
+    for (const [x, y] of [[-3.6, -9.6], [-1.2, -10.8], [1.2, -10.8], [3.6, -9.6]]) {
+      ctx.moveTo(x + 1.1, y);
+      ctx.ellipse(x, y, 1.1, 1.3, 0, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    // Rim and water.
+    ctx.beginPath();
+    ctx.ellipse(0, -15, 25, 4.6, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#d66a52';
+    ctx.fill();
+    const wobble = ripple * Math.sin(performance.now() / 70) * 0.9;
+    ctx.beginPath();
+    ctx.ellipse(0, -15.2 + wobble * 0.3, 21.5, 3.1 + wobble * 0.4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#86c8ec';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(-7, -15.9, 6, 0.9, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fill();
   }
 
   // A cartoon bone centred on (0, 0), about 46 x 16 units.
@@ -96,6 +157,9 @@
       this.effect = null; // { squash, lift } while turning around
       this.prop = null; // { kind: 'bone', x, born, eaten } on the ground
       this.propRaf = null;
+      this.bowl = null; // { x, drinking } her water bowl, or null
+      this.shadows = true;
+      this.bodyExtent = null; // { back, front } clip pixels, for her shadow
       this.source = null; // what is on the canvas now: a <video> or a pose <img>
       this.dpr = 1;
       this.onDraw = null;
@@ -310,6 +374,29 @@
       }
     }
 
+    // The water bowl (null hides it).
+    setBowl(bowl) {
+      this.bowl = bowl ? { x: bowl.x, drinking: false } : null;
+      if (!this.active) this.draw();
+    }
+
+    setBowlDrinking(drinking) {
+      if (this.bowl) this.bowl.drinking = drinking;
+    }
+
+    // Is window point (x, y) on the bowl (with a little slack)?
+    bowlHit(x, y) {
+      if (!this.bowl) return false;
+      const { scale } = this.view();
+      const ground = this.manifest.groundY * scale;
+      return Math.abs(x - this.bowl.x) <= 29 * BOWL_SCALE * scale && y >= ground - 23 * BOWL_SCALE * scale && y <= ground + 4 * scale;
+    }
+
+    setShadows(on) {
+      this.shadows = on;
+      if (!this.active) this.draw();
+    }
+
     // Shift the bone sideways without dropping it again.
     moveProp(x) {
       if (!this.prop) return;
@@ -343,10 +430,36 @@
       ctx.restore();
     }
 
+    _drawShadows(ctx) {
+      const { cx, dir, scale } = this.view();
+      const k = this.dpr * scale;
+      const groundY = this.dpr * this.manifest.groundY * scale;
+      if (this.source && this.bodyExtent) {
+        const { back, front } = this.bodyExtent;
+        const lift = this.effect ? this.effect.lift : 0;
+        const centre = this.dpr * cx + dir * ((front - back) / 2) * k;
+        drawShadow(ctx, centre, groundY - 1.5 * k, (front + back) * 0.36 * k * (1 - lift / 40), 7.5 * k, 0.3 * (1 - lift / 25));
+      }
+      if (this.prop && this.prop.eaten < 1 && performance.now() - this.prop.born > BONE_DROP_MS * 0.6) {
+        drawShadow(ctx, this.dpr * this.prop.x, groundY - k, 30 * k * (1 - 0.6 * this.prop.eaten), 3.5 * k, 0.22);
+      }
+      if (this.bowl) drawShadow(ctx, this.dpr * this.bowl.x, groundY - k, 31 * BOWL_SCALE * k, 4 * k, 0.26);
+    }
+
+    _drawBowl(ctx) {
+      const { scale } = this.view();
+      const k = this.dpr * scale;
+      ctx.save();
+      ctx.setTransform(k * BOWL_SCALE, 0, 0, k * BOWL_SCALE, this.dpr * this.bowl.x, this.dpr * this.manifest.groundY * scale);
+      drawBowl(ctx, this.bowl.drinking ? 1 : 0);
+      ctx.restore();
+    }
+
     draw() {
       const ctx = this.ctx;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (this.shadows) this._drawShadows(ctx);
       if (this.prop) this._drawProp(ctx); // behind her, so she stands over it
       const src = this.source;
       if (src && !(src instanceof HTMLVideoElement && src.readyState < HAVE_CURRENT_DATA)) {
@@ -358,6 +471,7 @@
         ctx.setTransform(k * dir * squash, 0, 0, k, this.dpr * cx, -lift);
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
+      if (this.bowl) this._drawBowl(ctx); // in front of her, so her snout dips into it
       if (this.onDraw) this.onDraw();
     }
 

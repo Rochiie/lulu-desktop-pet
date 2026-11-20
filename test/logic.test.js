@@ -208,3 +208,23 @@ test('pickAction repeats only when nothing else is possible', () => {
   assert.equal(L.pickAction(Math.random, { sit: 1 }, 'sit'), 'sit');
   assert.equal(L.pickAction(() => 0, { sit: 1, look: 1 }, 'sit'), 'look');
 });
+
+test('bowlRoute always lands her nose exactly at the bowl, with a modest stride change', () => {
+  const args = { reach: 223, start: 155, loop: 322, stop: 219, range: { min: 212, max: 2348 }, fMin: 0.88, fMax: 1.12 };
+  for (let from = 212; from <= 2348; from += 37) {
+    for (const bowl of [300, 1280, 2200]) {
+      const route = L.bowlRoute({ ...args, from, bowl });
+      assert.ok(route, `no route from ${from} to ${bowl}`);
+      assert.ok(route.length <= 2);
+      let at = from;
+      for (const leg of route) {
+        assert.ok(leg.f >= 0.88 && leg.f <= 1.12);
+        // Each leg is a real walk: start + n loops + stop, scaled by f.
+        const n = (Math.abs(leg.stop - at) / leg.f - 155 - 219) / 322;
+        assert.ok(Math.abs(n - Math.round(n)) < 1e-6 && Math.round(n) >= 0, `leg ${at}->${leg.stop} is not a whole walk`);
+        at = leg.stop;
+      }
+      assert.ok(Math.abs(Math.abs(bowl - at) - 223) < 1e-6, 'nose lands in the bowl');
+    }
+  }
+});

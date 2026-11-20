@@ -163,6 +163,51 @@
     return best && { stop: best.stop, boneX: best.boneX };
   }
 
+  // Plan a walk to a fixed spot (her water bowl) so her nose lands exactly in
+  // it. She may approach from either side (stopping `reach` short of the bowl)
+  // and may stretch or shorten her stride by a factor in [fMin, fMax] for this
+  // one walk. Picks the plan whose stride factor is closest to 1.
+  // Returns { stop, dir, n, f } or null if no exact plan fits.
+  function bowlPlan({ from, bowl, reach, start, loop, stop, range, fMin, fMax }) {
+    let best = null;
+    for (const side of [1, -1]) {
+      const at = bowl - side * reach; // where her centre must end up
+      if (at < range.min || at > range.max) continue;
+      const dist = (at - from) * side; // she walks in direction `side`
+      if (dist <= 0) continue;
+      for (let n = 0; n < 200; n += 1) {
+        const f = dist / (start + n * loop + stop);
+        if (f < fMin) break;
+        if (f > fMax) continue;
+        if (!best || Math.abs(f - 1) < Math.abs(best.f - 1)) best = { stop: at, dir: side, n, f };
+      }
+    }
+    return best;
+  }
+
+  // A route to the bowl: one exact walk if possible, otherwise a first walk to
+  // a spot from which an exact walk exists (shortest total distance).
+  // Returns an array of legs [{ stop, f }] or null.
+  function bowlRoute(args) {
+    const direct = bowlPlan(args);
+    if (direct) return [{ stop: direct.stop, f: direct.f }];
+    const { from, range, start, loop, stop, fMin, fMax } = args;
+    let best = null;
+    for (const dir of [1, -1]) {
+      for (let n = 0; n < 40; n += 1) {
+        for (const f of [1, (1 + fMin) / 2, (1 + fMax) / 2, fMin, fMax]) {
+          const at = from + dir * f * (start + n * loop + stop);
+          if (at < range.min || at > range.max) continue;
+          const second = bowlPlan({ ...args, from: at });
+          if (!second) continue;
+          const total = Math.abs(at - from) + Math.abs(second.stop - at);
+          if (!best || total < best.total) best = { total, legs: [{ stop: at, f }, { stop: second.stop, f: second.f }] };
+        }
+      }
+    }
+    return best && best.legs;
+  }
+
   // Head towards the side with more room; a tie is a coin toss.
   function chooseDirection(rng, roomLeft, roomRight) {
     if (roomLeft === roomRight) return rng() < 0.5 ? -1 : 1;
@@ -222,6 +267,8 @@
   }
 
   return {
+    bowlPlan,
+    bowlRoute,
     treatPlan,
     moodAt,
     scaleMood,

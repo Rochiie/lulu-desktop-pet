@@ -50,6 +50,8 @@
       this.crossing = false;
       this.treat = null; // { x } a bone waiting to be eaten
       this.follow = null; // { x, movedAt, lookedAt } while "Follow me" is on
+      this.thirst = 0; // clip pixels walked since her last drink
+      this.bowlMoves = 0; // counts bowl drags, so a trip to it can notice a move
 
       this.onNotify = null;
       this.cancelWait = null;
@@ -103,6 +105,80 @@
     setPrefs(prefs) {
       this.prefs = prefs;
       this.pace = this.clampPace(prefs.walkPace);
+      this.player.setShadows(prefs.shadow);
+      this.syncBowl();
+    }
+
+    // ------------------------------------------------------------ water bowl
+
+    bowlX() {
+      const edge = this.config.bowlEdgePx * this.layout.scale;
+      return L.clamp(this.prefs.bowlX * this.layout.width, edge, this.layout.width - edge);
+    }
+
+    syncBowl() {
+      if (!this.layout) return;
+      this.player.setBowl(this.prefs.waterBowl ? { x: this.bowlX() } : null);
+    }
+
+    // The bowl is being dragged to window x.
+    moveBowl(x) {
+      const edge = this.config.bowlEdgePx * this.layout.scale;
+      const clamped = L.clamp(x, edge, this.layout.width - edge);
+      this.prefs = { ...this.prefs, bowlX: clamped / this.layout.width };
+      this.bowlMoves += 1;
+      this.syncBowl();
+      return this.prefs.bowlX;
+    }
+
+    bowlRoute() {
+      const sc = this.layout.scale;
+      const D = this.distances();
+      const [fMin, fMax] = this.config.strideRange;
+      return L.bowlRoute({
+        from: this.cx,
+        bowl: this.bowlX(),
+        reach: this.config.treatNoseReach * sc,
+        start: D.start,
+        loop: D.loop,
+        stop: D.stop,
+        range: this.range(),
+        fMin,
+        fMax,
+      });
+    }
+
+    // Walk to the bowl (one or two walks, lined up so her nose lands in it)
+    // and drink. Gives up quietly if something else comes up on the way.
+    async drink() {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const moves = this.bowlMoves;
+        const route = this.bowlRoute();
+        if (!route) {
+          this.thirst = 0;
+          return;
+        }
+        let arrived = true;
+        for (const leg of route) {
+          if (Math.abs(leg.stop - this.cx) > 1) await this.doWalk({ target: leg.stop, strideScale: leg.f });
+          if (this.pending || !this.prefs.waterBowl || Math.abs(leg.stop - this.cx) > 1) return; // interrupted
+          if (this.bowlMoves !== moves) {
+            arrived = false; // the bowl was moved: plan again
+            break;
+          }
+        }
+        if (!arrived) continue;
+        await this.turnTo(this.bowlX() >= this.cx ? 1 : -1);
+        this.player.setBowlDrinking(true);
+        try {
+          await this.playClip('sniff');
+        } finally {
+          this.player.setBowlDrinking(false);
+        }
+        this.thirst = 0;
+        this.lastAction = 'drink';
+        return;
+      }
     }
 
     // Body edges in window pixels: [left, right].
@@ -121,6 +197,7 @@
       if (this.layout && layout.seq <= this.layout.seq) return; // stale
       const prev = this.layout;
       this.layout = layout;
+      this.syncBowl();
       switch (layout.reason) {
         case 'init':
           this.cx = xFraction * layout.width;
@@ -324,6 +401,7 @@
 
     weightsFor(mood) {
       const base = { ...this.config.weights, look: this.config.weights.look * this.prefs.lookMultiplier };
+      if (this.prefs.waterBowl) base.drink = this.config.drinkWeight;
       return L.applyMood(base, mood);
     }
 
@@ -462,7 +540,7 @@
     async standStep(req) {
       // "Come here" and treats may start her just out of sight (walking in);
       // everything else starts on screen.
-      const walksIn = (req && (req.type === 'come' || req.type === 'treat')) || (!req && this.treat);
+      const walksIn = (req && ['come', 'treat', 'drink'].includes(req.type)) || (!req && this.treat);
       if (!walksIn) this.clampIntoView();
       this.player.showPose('stand');
       if (req) {
@@ -479,6 +557,10 @@
       }
       if (this.userIdle) {
         await this.goToSleep(true);
+        return;
+      }
+      if (this.prefs.waterBowl && this.thirst >= this.config.thirstClipPx) {
+        await this.drink();
         return;
       }
       const mood = this.tune ? null : this.mood();
@@ -500,6 +582,9 @@
           return;
         case 'treat':
           await this.eatTreat();
+          return;
+        case 'drink':
+          if (this.prefs.waterBowl) await this.drink();
           return;
         case 'nap':
           this.lastAction = 'nap';
@@ -600,7 +685,9 @@
     }
 
     // toward: 'left' | 'right' walks off that side to the next screen.
-    async doWalk({ target = null, follow = false, toward = null } = {}) {
+    // strideScale stretches or shortens her steps a little for this walk only
+    // (used to land exactly at her bowl).
+    async doWalk({ target = null, follow = false, toward = null, strideScale = 1 } = {}) {
       const D = this.distances();
       const edges = this.layout.edges;
       const exits = ['left', 'right'].filter((side) => edges[side]);
@@ -634,6 +721,7 @@
         trip,
         target,
         follow,
+        strideScale,
         cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...this.config.walkLoops),
         hitWall: false,
         ending: false,
@@ -681,8 +769,10 @@
     walkFrame(phase, f) {
       const dx = RM[phase];
       if (dx.length !== f.frames) throw new Error(`Root motion for ${WALK_CLIPS[phase]} has ${dx.length} entries, clip has ${f.frames} frames`);
-      const d = L.stepDistance(dx, f.prevIndex, f.index, f.wrapped);
+      const stride = this.walk ? this.walk.strideScale : 1;
+      const d = L.stepDistance(dx, f.prevIndex, f.index, f.wrapped) * stride;
       this.cx += this.dir * d * this.layout.scale;
+      this.thirst += d;
       if (phase !== 'loop' || !this.walk) return;
       this.walk.loopIndex = f.index;
       if (f.wrapped) {
@@ -696,9 +786,10 @@
     // a wall leaves no room for a full cycle).
     stopRightAfterStart() {
       const D = this.distances();
+      const k = this.walk.strideScale;
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
-        remaining: 0, loopDist: D.loop, stopDist: D.stop,
+        remaining: 0, loopDist: D.loop * k, stopDist: D.stop * k,
         cyclesLeft: Infinity, wantStop: this.pending !== null, target: this.walk.target,
       });
       if (r.hitWall) this.walk.hitWall = true;
@@ -711,10 +802,11 @@
       const w = this.walk;
       if (!w || w.ending) return;
       const D = this.distances();
-      const remaining = L.remainingDistance(RM.loop, index === null ? w.loopIndex : index) * this.layout.scale;
+      const k = w.strideScale;
+      const remaining = L.remainingDistance(RM.loop, index === null ? w.loopIndex : index) * this.layout.scale * k;
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
-        remaining, loopDist: D.loop, stopDist: D.stop,
+        remaining, loopDist: D.loop * k, stopDist: D.stop * k,
         cyclesLeft: w.trip ? Infinity : w.cyclesLeft,
         wantStop: this.pending !== null,
         target: w.target,
@@ -740,6 +832,7 @@
           if (layout && (!this.layout || layout.seq > this.layout.seq)) {
             this.prepareLayout(layout);
             this.layout = layout;
+            this.syncBowl();
             this.cx = L.entryPosition({ dir: this.dir, width: layout.width, extents: this.extents() });
             if (this.walk === w) {
               w.trip = false;

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('lulu', {
   showMenu: () => ipcRenderer.send('lulu:show-menu'),
   savePosition: (xFraction) => ipcRenderer.send('lulu:save-position', Number(xFraction)),
   saveWalkPace: (pace) => ipcRenderer.send('lulu:save-walk-pace', Number(pace)),
+  saveBowl: (bowlX) => ipcRenderer.send('lulu:save-bowl', Number(bowlX)),
   reportError: (message) => ipcRenderer.send('lulu:error', String(message)),
   reportFatal: (message) => ipcRenderer.send('lulu:fatal', String(message)),
   onLayout: (callback) => subscribe('lulu:layout', callback),

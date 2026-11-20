@@ -681,6 +681,11 @@ function registerIpc() {
     buildMenu().popup({ window: state.win });
   });
 
+  on('lulu:save-bowl', (bowlX) => {
+    if (!Number.isFinite(bowlX) || bowlX < 0 || bowlX > 1) throw new TypeError('bowlX must be between 0 and 1');
+    state.settings.update({ bowlX });
+  });
+
   on('lulu:save-position', (xFraction) => {
     if (!Number.isFinite(xFraction)) throw new TypeError('xFraction must be a number');
     state.settings.update({ xFraction, displayId: state.displayId });
