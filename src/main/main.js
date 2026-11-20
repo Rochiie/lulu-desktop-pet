@@ -462,8 +462,12 @@ function registerIpc() {
     if (side !== 'left' && side !== 'right') throw new Error(`Bad side: ${side}`);
     const displays = snapshotDisplays();
     const cur = currentDisplay(displays);
-    if (!edgesFor(cur, displays)[side]) return null;
+    if (!edgesFor(cur, displays)[side]) {
+      log.info(`Lulu could not walk ${side}: that screen is unavailable`);
+      return null;
+    }
     const target = displaysLib.neighbours(displays, cur.id)[side];
+    log.info(`Lulu walked ${side} onto screen ${target}`);
     state.displayId = target;
     state.settings.update({ displayId: target });
     const layout = place('cross', {}, { broadcast: false });
