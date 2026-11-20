@@ -114,6 +114,14 @@
     return NEUTRAL_MOOD;
   }
 
+  // Soften a mood: strength 0 = no effect (all multipliers 1), 1 = full.
+  function scaleMood(mood, strength) {
+    const soften = (m) => 1 + (m - 1) * strength;
+    const weights = {};
+    for (const [action, m] of Object.entries(mood.weights)) weights[action] = soften(m);
+    return { ...mood, weights, hold: soften(mood.hold), nap: soften(mood.nap) };
+  }
+
   function applyMood(weights, mood) {
     const out = {};
     for (const [action, w] of Object.entries(weights)) {
@@ -126,6 +134,26 @@
   function canStartWalk({ cx, dir, range, aheadIsWall, startDist, loopDist, stopDist }) {
     if (!aheadIsWall) return true;
     return inRange(cx + dir * (startDist + loopDist + stopDist), range);
+  }
+
+  // Plan a treat so her nose lands exactly on the bone. Walking from `from`,
+  // she can only stop at from ± (start + n·loop + stop) for n = 0, 1, 2…
+  // Picks the stop whose nose point (stop ± reach) is closest to `bone`,
+  // keeping her on screen (range) and the bone inside [edge, width - edge].
+  // Returns { stop, boneX } or null if nothing fits.
+  function treatPlan({ from, bone, width, range, reach, start, loop, stop, edge }) {
+    let best = null;
+    const maxCycles = Math.ceil(width / loop) + 2;
+    for (const dir of [1, -1]) {
+      for (let n = 0; n <= maxCycles; n += 1) {
+        const at = from + dir * (start + n * loop + stop);
+        const boneX = at + dir * reach;
+        if (at < range.min || at > range.max || boneX < edge || boneX > width - edge) continue;
+        const miss = Math.abs(boneX - bone);
+        if (!best || miss < best.miss) best = { stop: at, boneX, miss };
+      }
+    }
+    return best && { stop: best.stop, boneX: best.boneX };
   }
 
   // Head towards the side with more room; a tie is a coin toss.
@@ -187,7 +215,9 @@
   }
 
   return {
+    treatPlan,
     moodAt,
+    scaleMood,
     applyMood,
     createRubDetector,
     clamp,

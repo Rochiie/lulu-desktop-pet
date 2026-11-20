@@ -11,13 +11,14 @@ const {
 } = require('electron');
 
 const log = require('./log');
-const { Settings } = require('./settings');
+const { Settings, prefsFor, DEFAULTS, USER_KEYS } = require('./settings');
 const { validateManifest } = require('./manifest');
 const displaysLib = require('./displays');
 const { createPetWindow } = require('./window');
 const { createFullscreenDetector } = require('./fullscreen');
 const { buildMenuTemplate } = require('./menu');
 const { createUpdater } = require('./updater');
+const { openSettingsWindow } = require('./settings-window');
 
 const TUNE = process.argv.includes('--tune');
 const ASSETS_DIR = path.join(__dirname, '..', '..', 'assets');
@@ -33,6 +34,7 @@ const MAX_RENDERER_RESTARTS = 3;
 const RENDERER_RESTART_WINDOW_MS = 60 * 1000;
 const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake']);
 const COME_HERE_KEY = 'CommandOrControl+Alt+L';
+const FOLLOW_POLL_MS = 250;
 
 const state = {
   manifest: null,
@@ -55,6 +57,11 @@ const state = {
   intervals: [],
   displayChangeTimer: null,
   rendererRestarts: [],
+  settingsWin: null,
+  following: false,
+  followTimer: null,
+  followEnd: null,
+  lastFollowX: null,
   quitting: false,
 };
 
@@ -225,13 +232,32 @@ function hideForAnHour() {
 function showByUser() {
   clearTimeout(state.hideTimer);
   state.hideTimer = null;
+  const wasHidden = state.hiddenByUser;
   state.hiddenByUser = false;
+  if (wasHidden && state.settings.get().walkIn) {
+    enterOn(state.displayId, state.settings.get().xFraction);
+    return;
+  }
   refreshVisibility();
 }
 
-// "Come here": she walks to where the mouse is. If the mouse is on another
-// screen, she moves to that screen and walks in from its nearer side.
-function comeHere() {
+// Put her just out of sight on the nearer side of a screen and have her walk
+// in to xFraction of its width. Without "walk in", she just appears there.
+function enterOn(displayId, xFraction) {
+  const displays = snapshotDisplays();
+  const display = displays.find((d) => d.id === displayId) || currentDisplay(displays);
+  if (!state.settings.get().walkIn) {
+    relocate(display.id, 'move', { place: 'center' });
+    return;
+  }
+  const x = xFraction * display.workArea.width;
+  relocate(display.id, 'move', { place: xFraction < 0.5 ? 'enter-left' : 'enter-right', comeX: x });
+}
+
+// "Come here" (purpose 'come') and "Give a treat" (purpose 'treat'): she
+// walks to where the mouse is. If the mouse is on another screen, she moves to
+// that screen and walks in from its nearer side.
+function comeHere(purpose = 'come') {
   showByUser();
   const point = screen.getCursorScreenPoint();
   const target = screen.getDisplayNearestPoint(point);
@@ -241,18 +267,56 @@ function comeHere() {
   if (target.id !== cur.id && !targetBlocked) {
     const x = point.x - target.workArea.x;
     const place = x < target.workArea.width / 2 ? 'enter-left' : 'enter-right';
-    log.info(`Come here: Lulu moves to screen ${target.id}`);
-    relocate(target.id, 'move', { place, comeX: x });
+    log.info(`${purpose === 'treat' ? 'Treat' : 'Come here'}: Lulu moves to screen ${target.id}`);
+    relocate(target.id, 'move', { place, comeX: x, purpose });
     return;
   }
-  // Same screen (or the mouse's screen is fullscreen): walk as close as she can.
-  send('lulu:command', { name: 'come', x: point.x - cur.workArea.x });
+  // Same screen (or the mouse's screen is fullscreen): as close as she can.
+  send('lulu:command', { name: purpose, x: point.x - cur.workArea.x });
+}
+
+// ---------------------------------------------------------------- follow me
+
+function setFollow(on) {
+  clearInterval(state.followTimer);
+  clearTimeout(state.followEnd);
+  state.followTimer = null;
+  state.followEnd = null;
+  state.lastFollowX = null;
+  state.following = on;
+  if (on) {
+    if (state.hiddenByUser) showByUser();
+    state.followEnd = setTimeout(() => setFollow(false), state.settings.get().followSeconds * 1000);
+    state.followTimer = setInterval(() => {
+      try {
+        sendFollow();
+      } catch (err) {
+        log.error('Follow me update failed', err);
+      }
+    }, FOLLOW_POLL_MS);
+    sendFollow();
+  } else {
+    send('lulu:follow', { active: false });
+  }
+  refreshTray();
+}
+
+// Tell her where the mouse is, relative to her screen. x may be off either
+// side when the mouse is on another screen; she heads that way.
+function sendFollow() {
+  const point = screen.getCursorScreenPoint();
+  const cur = currentDisplay(snapshotDisplays());
+  const x = point.x - cur.workArea.x;
+  if (x === state.lastFollowX) return;
+  state.lastFollowX = x;
+  send('lulu:follow', { active: true, x });
 }
 
 function bringBackToCentre() {
-  showByUser();
-  const primary = screen.getPrimaryDisplay();
-  relocate(primary.id, 'move', { place: 'center' });
+  clearTimeout(state.hideTimer);
+  state.hideTimer = null;
+  state.hiddenByUser = false;
+  enterOn(screen.getPrimaryDisplay().id, 0.5);
   scanFullscreen({ force: true });
 }
 
@@ -293,12 +357,16 @@ function reactToBusy() {
     if (target) {
       log.info(`Fullscreen app on Lulu's screen; she hops to ${target.id}`);
       state.fullscreenHidden = false;
-      relocate(target.id, 'hop', { place: 'random' });
+      if (state.settings.get().walkIn) enterOn(target.id, 0.2 + Math.random() * 0.6);
+      else relocate(target.id, 'hop', { place: 'random' });
       return;
     }
     state.fullscreenHidden = true;
-  } else {
+  } else if (state.fullscreenHidden) {
+    // A screen came free after every screen was fullscreen: walk back in.
     state.fullscreenHidden = false;
+    enterOn(cur.id, state.settings.get().xFraction);
+    return;
   }
   send('lulu:layout', computeLayout('edges').layout);
   refreshVisibility();
@@ -340,22 +408,41 @@ function startPolling() {
 
 // ---------------------------------------------------------------- settings actions
 
-function setSize(size) {
-  state.settings.update({ size });
-  place('resize');
+function sendPrefs() {
+  send('lulu:prefs', prefsFor(state.settings.get(), state.manifest));
+}
+
+// Apply a change from the menu or the Settings window, with its side effects.
+function applySettingsPatch(patch) {
+  const unknown = Object.keys(patch).filter((k) => !USER_KEYS.includes(k));
+  if (unknown.length) throw new Error(`Unknown settings: ${unknown.join(', ')}`);
+  if ('startWithWindows' in patch && !app.isPackaged) {
+    log.warn('Start with Windows only works in the installed app');
+    delete patch.startWithWindows;
+  }
+  const before = state.settings.get();
+  const after = state.settings.update(patch);
+  if (after.startWithWindows !== before.startWithWindows) {
+    app.setLoginItemSettings({ openAtLogin: after.startWithWindows });
+  }
+  if (after.size !== before.size) place('resize');
+  if (after.walkBetweenScreens !== before.walkBetweenScreens) send('lulu:layout', computeLayout('edges').layout);
+  if (after.avoidFullscreen !== before.avoidFullscreen) scanFullscreen();
+  sendPrefs();
   refreshTray();
+  return after;
+}
+
+function setSize(size) {
+  applySettingsPatch({ size });
 }
 
 function setWalkBetweenScreens(on) {
-  state.settings.update({ walkBetweenScreens: on });
-  send('lulu:layout', computeLayout('edges').layout);
-  refreshTray();
+  applySettingsPatch({ walkBetweenScreens: on });
 }
 
 function setAvoidFullscreen(on) {
-  state.settings.update({ avoidFullscreen: on });
-  scanFullscreen();
-  refreshTray();
+  applySettingsPatch({ avoidFullscreen: on });
 }
 
 function syncLoginItem() {
@@ -367,14 +454,46 @@ function syncLoginItem() {
 }
 
 function setStartWithWindows(on) {
-  if (!app.isPackaged) {
-    log.warn('Start with Windows only works in the installed app');
-    refreshTray();
+  applySettingsPatch({ startWithWindows: on });
+}
+
+// ---------------------------------------------------------------- settings window
+
+function openSettings() {
+  if (state.settingsWin && !state.settingsWin.isDestroyed()) {
+    if (state.settingsWin.isMinimized()) state.settingsWin.restore();
+    state.settingsWin.focus();
     return;
   }
-  app.setLoginItemSettings({ openAtLogin: on });
-  state.settings.update({ startWithWindows: on });
-  refreshTray();
+  state.settingsWin = openSettingsWindow({
+    icon: ICON_PATH,
+    preload: path.join(__dirname, '..', 'preload', 'settings-preload.js'),
+    page: path.join(__dirname, '..', 'settings', 'index.html'),
+    log,
+  });
+  state.settingsWin.on('closed', () => {
+    state.settingsWin = null;
+  });
+}
+
+function settingsView() {
+  return {
+    values: state.settings.get(),
+    defaults: DEFAULTS,
+    meta: {
+      canStartWithWindows: app.isPackaged,
+      fullscreenAvailable: state.detector !== null,
+      multipleScreens: screen.getAllDisplays().length > 1,
+      manifestWalkSpeed: state.manifest.walkSpeedPxPerSec,
+      version: app.getVersion(),
+    },
+  };
+}
+
+function assertSettingsSender(event) {
+  if (!state.settingsWin || state.settingsWin.isDestroyed() || event.sender !== state.settingsWin.webContents) {
+    throw new Error('Settings IPC from an unexpected sender');
+  }
 }
 
 // ---------------------------------------------------------------- menu & tray
@@ -384,7 +503,10 @@ const menuActions = {
     if (!COMMANDS.has(name)) throw new Error(`Unknown command ${name}`);
     send('lulu:command', { name });
   },
-  comeHere: () => comeHere(),
+  comeHere: () => comeHere('come'),
+  giveTreat: () => comeHere('treat'),
+  toggleFollow: () => setFollow(!state.following),
+  openSettings,
   setSize,
   moveToDisplay: (id) => {
     showByUser();
@@ -416,6 +538,7 @@ function menuState() {
     avoidFullscreen: s.avoidFullscreen,
     fullscreenAvailable: state.detector !== null,
     hiddenByUser: state.hiddenByUser,
+    following: state.following,
     version: app.getVersion(),
     updatesAvailable: state.updater !== null,
     updateStatus: state.updater ? state.updater.status : null,
@@ -455,6 +578,15 @@ function registerTuneShortcuts() {
       log.warn(`Could not register tune shortcut ${accelerator} (another app may own it)`);
     }
   }
+  const actions = {
+    'CommandOrControl+Alt+T': () => comeHere('treat'),
+    'CommandOrControl+Alt+F': () => setFollow(!state.following),
+  };
+  for (const [accelerator, action] of Object.entries(actions)) {
+    if (!globalShortcut.register(accelerator, action)) {
+      log.warn(`Could not register tune shortcut ${accelerator} (another app may own it)`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- IPC
@@ -484,10 +616,33 @@ function registerIpc() {
     const s = state.settings.get();
     return {
       manifest: state.manifest,
-      settings: { walkSpeed: s.walkSpeed, xFraction: s.xFraction },
+      settings: { xFraction: s.xFraction },
+      prefs: prefsFor(s, state.manifest),
       layout,
       tune: TUNE,
     };
+  });
+
+  ipcMain.handle('settings:get', (event) => {
+    assertSettingsSender(event);
+    return settingsView();
+  });
+
+  ipcMain.handle('settings:update', (event, patch) => {
+    assertSettingsSender(event);
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new TypeError('patch must be an object');
+    applySettingsPatch({ ...patch });
+    return settingsView();
+  });
+
+  ipcMain.handle('settings:reset', (event) => {
+    assertSettingsSender(event);
+    const patch = {};
+    for (const key of USER_KEYS) {
+      if (key !== 'startWithWindows') patch[key] = DEFAULTS[key];
+    }
+    applySettingsPatch(patch);
+    return settingsView();
   });
 
   // She has walked off the edge of her screen: move the window to the next
@@ -537,6 +692,7 @@ function registerIpc() {
     if (!Number.isFinite(speed)) throw new TypeError('speed must be a number');
     state.settings.update({ walkSpeed: speed });
     state.settings.flush();
+    sendPrefs();
     log.info(`Walk speed saved: ${speed} px/s at size 1.0`);
   });
 
@@ -572,6 +728,11 @@ async function start() {
   );
   state.settings = new Settings(path.join(app.getPath('userData'), 'settings.json'), log);
   state.settings.load();
+  state.settings.onChange = () => {
+    if (state.settingsWin && !state.settingsWin.isDestroyed()) {
+      state.settingsWin.webContents.send('settings:changed', settingsView());
+    }
+  };
   state.displayId = state.settings.get().displayId;
   syncLoginItem();
 
@@ -613,8 +774,11 @@ process.on('unhandledRejection', (reason) => log.error('Unhandled rejection', re
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Opening Lulu again while she is running (e.g. her shortcut) opens Settings.
   app.on('second-instance', () => {
-    if (windowAlive()) showByUser();
+    if (!windowAlive()) return;
+    showByUser();
+    openSettings();
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
@@ -622,6 +786,8 @@ if (!app.requestSingleInstanceLock()) {
     state.intervals.forEach(clearInterval);
     clearTimeout(state.hideTimer);
     clearTimeout(state.displayChangeTimer);
+    clearInterval(state.followTimer);
+    clearTimeout(state.followEnd);
     globalShortcut.unregisterAll();
     if (state.updater) state.updater.stop();
     if (state.settings) state.settings.flush();

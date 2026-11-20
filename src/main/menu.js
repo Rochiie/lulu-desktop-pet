@@ -12,6 +12,9 @@ function buildMenuTemplate(s, a) {
       registerAccelerator: false, // the key works everywhere via a global shortcut
       click: () => a.comeHere(),
     },
+    { label: 'Follow me', type: 'checkbox', checked: s.following, click: () => a.toggleFollow() },
+    { label: 'Give a treat', click: () => a.giveTreat() },
+    { type: 'separator' },
     { label: 'Walk', click: () => a.command('walk') },
     { label: 'Sit', click: () => a.command('sit') },
     { label: 'Nap', click: () => a.command('nap') },
@@ -57,6 +60,7 @@ function buildMenuTemplate(s, a) {
       click: (item) => a.setAvoidFullscreen(item.checked),
     },
     { type: 'separator' },
+    { label: 'Settings…', click: () => a.openSettings() },
     {
       label: s.canStartWithWindows ? 'Start with Windows' : 'Start with Windows (installed app only)',
       type: 'checkbox',

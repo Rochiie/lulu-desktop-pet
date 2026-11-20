@@ -10,6 +10,31 @@
 
   const LOAD_TIMEOUT_MS = 20000;
   const HAVE_CURRENT_DATA = 2;
+  const BONE_DROP_MS = 700;
+
+  // 0..1 -> 0..1 with a couple of small bounces at the end.
+  function easeOutBounce(t) {
+    const n = 7.5625;
+    const d = 2.75;
+    if (t < 1 / d) return n * t * t;
+    if (t < 2 / d) return n * (t -= 1.5 / d) * t + 0.75;
+    if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + 0.9375;
+    return n * (t -= 2.625 / d) * t + 0.984375;
+  }
+
+  // A cartoon bone centred on (0, 0), about 46 x 16 units.
+  function traceBone(ctx) {
+    const knob = 5.5;
+    ctx.beginPath();
+    for (const x of [-17, 17]) {
+      for (const y of [-4, 4]) {
+        ctx.moveTo(x + knob, y);
+        ctx.arc(x, y, knob, 0, Math.PI * 2);
+      }
+    }
+    ctx.moveTo(-17, -3.5);
+    ctx.rect(-17, -3.5, 34, 7);
+  }
 
   class Interrupt extends Error {
     constructor() {
@@ -67,6 +92,8 @@
       this.active = null;
       this.turning = null;
       this.effect = null; // { squash, lift } while turning around
+      this.prop = null; // { kind: 'bone', x, born, eaten } on the ground
+      this.propRaf = null;
       this.source = null; // what is on the canvas now: a <video> or a pose <img>
       this.dpr = 1;
       this.onDraw = null;
@@ -267,10 +294,59 @@
       if (this.turning) this._endTurn(this.turning, new Interrupt());
     }
 
+    // A treat on the ground (null removes it). It drops in from above.
+    setProp(prop) {
+      this.prop = prop ? { ...prop, born: performance.now(), eaten: 0 } : null;
+      this.draw();
+      if (this.prop && this.propRaf === null) {
+        const step = (now) => {
+          this.propRaf = null;
+          if (!this.prop) return;
+          if (!this.active) this.draw(); // a playing clip redraws anyway
+          if (now - this.prop.born < BONE_DROP_MS) this.propRaf = requestAnimationFrame(step);
+        };
+        this.propRaf = requestAnimationFrame(step);
+      }
+    }
+
+    // Shift the bone sideways without dropping it again.
+    moveProp(x) {
+      if (!this.prop) return;
+      this.prop.x = x;
+      if (!this.active) this.draw();
+    }
+
+    // 0 = whole, 1 = gone.
+    setPropEaten(amount) {
+      if (this.prop) this.prop.eaten = amount;
+    }
+
+    _drawProp(ctx) {
+      const p = this.prop;
+      const { scale } = this.view();
+      const k = this.dpr * scale;
+      const fall = Math.min(1, (performance.now() - p.born) / BONE_DROP_MS);
+      const restY = this.manifest.groundY * scale - 11 * scale; // lying on the ground
+      const y = -20 * scale + (restY + 20 * scale) * easeOutBounce(fall);
+      const size = 1.3 * (1 - 0.6 * p.eaten);
+      ctx.save();
+      ctx.setTransform(k * size, 0, 0, k * size, this.dpr * p.x, this.dpr * y);
+      ctx.rotate(-0.08);
+      ctx.globalAlpha = 1 - p.eaten;
+      traceBone(ctx);
+      ctx.fillStyle = '#f4ead4';
+      ctx.fill();
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = '#a88c5c';
+      ctx.stroke();
+      ctx.restore();
+    }
+
     draw() {
       const ctx = this.ctx;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (this.prop) this._drawProp(ctx); // behind her, so she stands over it
       const src = this.source;
       if (src && !(src instanceof HTMLVideoElement && src.readyState < HAVE_CURRENT_DATA)) {
         const { cx, dir, scale } = this.view();

@@ -47,6 +47,18 @@ class FakePlayer {
 
   draw() {}
 
+  setProp(prop) {
+    this.prop = prop ? { ...prop, eaten: 0 } : null;
+  }
+
+  setPropEaten(amount) {
+    if (this.prop) this.prop.eaten = amount;
+  }
+
+  moveProp(x) {
+    if (this.prop) this.prop.x = x;
+  }
+
   endLoop() {
     if (this.active) this.active.loop = false;
   }
@@ -139,8 +151,12 @@ function makeLayout(seq, width, edges = { left: false, right: false }, reason = 
 }
 
 const NOON = () => new Date(2026, 0, 1, 12, 0, 0);
+const PREFS = {
+  walkSpeed: manifest.walkSpeedPxPerSec, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
+  followSeconds: 60, noticeMouse: true, walkIn: true,
+};
 
-function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null, clock = NOON } = {}) {
+function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null, clock = NOON, prefs = {} } = {}) {
   const player = new FakePlayer();
   const errors = [];
   const positions = [];
@@ -160,7 +176,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
     },
     api,
     extents: EXTENTS,
-    walkSpeed: manifest.walkSpeedPxPerSec,
+    prefs: { ...PREFS, ...prefs },
     tune: false,
     prepareLayout: () => {},
     clock,
@@ -284,7 +300,8 @@ test('trips cross to the next screen and come in from the other side', async () 
   let seq = 1;
   const crosses = [];
   const t = setup({
-    config: { weights: { walk: 1 }, tripChance: 1 },
+    config: { weights: { walk: 1 } },
+    prefs: { tripChance: 1 },
     layout: makeLayout(seq, 1500, { left: false, right: true }),
     xFraction: 0.3,
     cross: async (side) => {
@@ -305,7 +322,8 @@ test('trips cross to the next screen and come in from the other side', async () 
 
 test('if the next screen refuses, she turns back and stays on screen', async () => {
   const t = setup({
-    config: { weights: { walk: 1 }, tripChance: 1 },
+    config: { weights: { walk: 1 } },
+    prefs: { tripChance: 1 },
     layout: makeLayout(1, 1500, { left: false, right: true }),
     xFraction: 0.5,
     cross: async () => null,
@@ -403,4 +421,124 @@ test('"near" is measured from her body, either way she faces', () => {
   t.behaviour.dir = -1; // body 1350..1700
   assert.equal(t.behaviour.isNear(1700 + 190), true);
   assert.equal(cx, 1500);
+});
+
+test('a treat: the bone drops, she walks over, eats it and wags', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.2 });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.command('treat', { x: 2000 });
+  const bone = t.player.prop.x; // dropped straight away, near the mouse
+  assert.ok(Math.abs(bone - 2000) <= D_LOOP / 2 + 1, `bone at ${bone}`);
+  await until(() => t.player.history.slice(before).includes('happy'));
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const h = t.player.history.slice(before).join(' ');
+  assert.match(h, /walk_stop .*sniff happy/);
+  assert.equal(t.player.prop, null, 'bone eaten');
+  assert.equal(t.behaviour.dir, 1);
+  // Her nose (while eating) ended exactly on the bone.
+  const nose = t.behaviour.cx + globalThis.LuluConfig.treatNoseReach;
+  assert.ok(Math.abs(nose - bone) < 0.5, `nose at ${nose}, bone at ${bone}`);
+});
+
+test('a treat dropped on top of her lands a short walk away', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.5 });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.command('treat', { x: t.behaviour.cx + 10 });
+  const gap = Math.abs(t.player.prop.x - t.behaviour.cx);
+  t.stop();
+  assert.ok(gap > 300, `bone only ${gap} px away`);
+});
+
+test('a treat survives being dragged away: she still goes back for it', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.2 });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.command('treat', { x: 2200 });
+  await t.player.next('walk_loop');
+  t.behaviour.beginDrag();
+  t.behaviour.dragTo(500);
+  t.behaviour.endDrag();
+  await until(() => t.player.prop === null, 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+});
+
+test('follow me: she walks after the mouse and stops near it', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.2 });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.setFollow({ active: true, x: 2400 });
+  await until(() => Math.abs(t.behaviour.cx - 2400) < 260 && !t.player.playing, 8000);
+  // The mouse goes back the other way.
+  t.behaviour.setFollow({ active: true, x: 900 });
+  await until(() => Math.abs(t.behaviour.cx - 900) < 260 && !t.player.playing, 8000);
+  t.behaviour.setFollow({ active: false });
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.equal(t.behaviour.follow, null);
+});
+
+test('follow me with the mouse on the next screen: she walks over to it', async () => {
+  let crossed = null;
+  const t = setup({
+    config: { weights: { sit: 1 } },
+    layout: makeLayout(1, 1500, { left: false, right: true }),
+    xFraction: 0.5,
+    cross: async (side) => {
+      crossed = side;
+      return makeLayout(2, 1500, { left: true, right: false }, 'cross');
+    },
+  });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.setFollow({ active: true, x: 2200 });
+  await until(() => crossed !== null, 8000);
+  // Main now reports the mouse relative to the new screen.
+  t.behaviour.setFollow({ active: true, x: 1100 });
+  await until(() => !t.player.playing && Math.abs(t.behaviour.cx - 1100) < 200, 8000);
+  t.stop();
+  assert.equal(crossed, 'right');
+  // One walk: she did not stop short after crossing and set off again.
+  assert.equal(t.player.history.filter((c) => c === 'walk_start').length, 1);
+});
+
+test('walk-in: she starts out of sight and walks to her spot', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2000), xFraction: 0.7 });
+  t.stop(); // pause while we set her up
+  t.behaviour.walkInTo(1400);
+  assert.ok(t.behaviour.cx > 2000, 'starts off the right edge');
+  t.behaviour.setRunning(true);
+  await until(() => t.player.history.includes('look'));
+  t.stop();
+  assert.ok(Math.abs(t.behaviour.cx - 1400) <= D_LOOP / 2 + 1, `stopped at ${t.behaviour.cx}`);
+});
+
+test('preferences: looks at you more, and moods can be turned off', () => {
+  const t = setup({ prefs: { lookMultiplier: 2, moodStrength: 0 }, clock: () => new Date(2026, 0, 1, 2, 0, 0) });
+  t.stop();
+  const w = t.behaviour.weightsFor(t.behaviour.mood());
+  assert.equal(w.look, globalThis.LuluConfig.weights.look * 2);
+  assert.equal(w.nap, globalThis.LuluConfig.weights.nap); // night has no effect at strength 0
+  t.behaviour.setPrefs({ ...PREFS, walkSpeed: 100 });
+  assert.equal(t.behaviour.walkSpeed, 100);
+});
+
+test('noticing can be switched off', async () => {
+  const t = setup({ prefs: { noticeMouse: false } });
+  t.behaviour.notice();
+  t.stop();
+  assert.equal(t.behaviour.pending, null);
+});
+
+test('a treat on another screen: she walks in from the side to eat it', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 3000) });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.applyLayout({ ...makeLayout(2, 1920), reason: 'move', place: 'enter-right', comeX: 1200, purpose: 'treat' });
+  assert.ok(t.behaviour.cx > 1920, 'starts out of sight');
+  await until(() => t.player.history.slice(before).includes('happy'), 8000);
+  t.stop();
+  const h = t.player.history.slice(before).join(' ');
+  assert.match(h, /walk_start .*walk_stop .*sniff happy/);
+  const nose = t.behaviour.cx - globalThis.LuluConfig.treatNoseReach; // facing left
+  assert.ok(Math.abs(nose - 1200) <= D_LOOP / 2 + 1, `nose at ${nose}, wanted ~1200`);
 });

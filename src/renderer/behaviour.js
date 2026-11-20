@@ -9,12 +9,12 @@
   const L = root.LuluLogic;
   const Interrupt = root.LuluInterrupt;
 
-  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come']);
+  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
     constructor({
-      player, manifest, config, api, extents, walkSpeed, tune, prepareLayout,
+      player, manifest, config, api, extents, prefs, tune, prepareLayout,
       rng = Math.random, clock = () => new Date(),
     }) {
       this.player = player;
@@ -26,7 +26,8 @@
       this.prepareLayout = prepareLayout; // resizes the canvas for a new layout
       this.rng = rng;
       this.clock = clock;
-      this.walkSpeed = this.clampSpeed(walkSpeed); // px/s at size 1.0
+      this.prefs = prefs;
+      this.walkSpeed = this.clampSpeed(prefs.walkSpeed); // px/s at size 1.0
 
       this.layout = null;
       this.cx = 0; // her centre, in window pixels
@@ -45,6 +46,8 @@
       this.lastNotice = -Infinity;
       this.walk = null; // the walk in progress
       this.crossing = false;
+      this.treat = null; // { x } a bone waiting to be eaten
+      this.follow = null; // { x, movedAt, lookedAt } while "Follow me" is on
 
       this.onNotify = null;
       this.cancelWait = null;
@@ -97,6 +100,18 @@
       this.walkSpeed = this.clampSpeed(speed);
     }
 
+    // Preferences from the Settings window, applied live.
+    setPrefs(prefs) {
+      this.prefs = prefs;
+      this.walkSpeed = this.clampSpeed(prefs.walkSpeed);
+    }
+
+    // Body edges in window pixels: [left, right].
+    body() {
+      const e = this.extents();
+      return this.dir > 0 ? [this.cx - e.back, this.cx + e.front] : [this.cx - e.front, this.cx + e.back];
+    }
+
     savePosition() {
       if (this.layout) this.api.savePosition(L.clamp(this.cx / this.layout.width, 0, 1));
     }
@@ -120,7 +135,7 @@
           break;
         case 'hop':
         case 'move':
-          this.relocated(layout.place, layout.comeX);
+          this.relocated(layout.place, layout.comeX, layout.purpose);
           break;
         default:
           throw new Error(`Unknown layout reason: ${layout.reason}`);
@@ -130,13 +145,15 @@
     // She has been moved to another screen (fullscreen app, menu, tray, or
     // "Come here" pointing at another screen). 'enter-left'/'enter-right'
     // put her just out of sight on that side, ready to walk in to comeX.
-    relocated(place, comeX) {
+    relocated(place, comeX, purpose) {
       this.interrupt();
+      this.clearTreat(); // a bone on the old screen is left behind
       const r = this.range();
       if (place === 'enter-left' || place === 'enter-right') {
         this.dir = place === 'enter-left' ? 1 : -1; // out of sight, so no turn is needed
         this.cx = L.entryPosition({ dir: this.dir, width: this.layout.width, extents: this.extents() });
-        this.pending = { type: 'come', x: comeX };
+        if (purpose === 'treat') this.dropTreat(comeX);
+        else this.pending = { type: 'come', x: comeX };
       } else if (place === 'random') {
         this.cx = L.randRange(this.rng, r.min, r.max);
       } else {
@@ -159,9 +176,10 @@
 
     command(name, args = {}) {
       if (!COMMANDS.has(name)) throw new Error(`Unknown command: ${name}`);
-      if (name === 'come') {
-        if (!Number.isFinite(args.x)) throw new Error('come needs an x position');
-        this.request('come', { x: args.x });
+      if (name === 'come' || name === 'treat') {
+        if (!Number.isFinite(args.x)) throw new Error(`${name} needs an x position`);
+        if (name === 'treat') this.dropTreat(args.x);
+        else this.request('come', { x: args.x });
         return;
       }
       this.request(name);
@@ -169,6 +187,7 @@
 
     // The mouse is near her: she looks up at you at the next natural break.
     notice() {
+      if (!this.prefs.noticeMouse || this.follow || this.treat) return;
       if (this.dragging || this.pose === 'sleep' || this.pending) return;
       if (this.walk && this.walk.target !== null) return; // already coming to you
       const now = Date.now();
@@ -180,15 +199,133 @@
     // Is window x within noticeRadiusPx of her body (not her centre)?
     isNear(x) {
       if (!this.layout) return false;
-      const e = this.extents();
-      const left = this.dir > 0 ? this.cx - e.back : this.cx - e.front;
-      const right = this.dir > 0 ? this.cx + e.front : this.cx + e.back;
+      const [left, right] = this.body();
       const reach = this.config.noticeRadiusPx * this.layout.scale;
       return x >= left - reach && x <= right + reach;
     }
 
+    // Start just out of sight on the nearer side and walk in to x.
+    walkInTo(x) {
+      this.dir = x < this.layout.width / 2 ? 1 : -1;
+      this.cx = L.entryPosition({ dir: this.dir, width: this.layout.width, extents: this.extents() });
+      this.pending = { type: 'come', x };
+    }
+
+    // ------------------------------------------------------------ treats
+
+    // Plan where she stops so her nose lands on a bone near window x.
+    planTreat(x) {
+      const sc = this.layout.scale;
+      const D = this.distances();
+      return L.treatPlan({
+        from: this.cx,
+        bone: x,
+        width: this.layout.width,
+        range: this.range(),
+        reach: this.config.treatNoseReach * sc,
+        start: D.start,
+        loop: D.loop,
+        stop: D.stop,
+        edge: 30 * sc,
+      });
+    }
+
+    // Drop a bone as close to window x as possible, at a spot she can walk to
+    // and eat from exactly. (If she is mid-walk, her stopping point is not
+    // known yet, so it lands at x and is lined up when she sets off.)
+    dropTreat(x) {
+      const edge = 30 * this.layout.scale;
+      let bx = L.clamp(x, edge, this.layout.width - edge);
+      if (!this.walk) {
+        const plan = this.planTreat(bx);
+        if (plan) bx = plan.boneX;
+      }
+      this.treat = { x: bx };
+      this.player.setProp({ kind: 'bone', x: bx });
+      this.request('treat');
+    }
+
+    clearTreat() {
+      this.treat = null;
+      this.player.setProp(null);
+    }
+
+    // Walk up to the bone, eat it (sniff), and wag (happy).
+    async eatTreat() {
+      const t = this.treat;
+      if (!t) return;
+      const plan = this.planTreat(t.x);
+      if (plan) {
+        if (Math.abs(plan.boneX - t.x) > 1) {
+          t.x = plan.boneX; // she moved since it dropped (a drag or a walk): line it up
+          this.player.moveProp(t.x);
+        }
+        if (Math.abs(plan.stop - this.cx) > 1) await this.doWalk({ target: plan.stop });
+      }
+      if (this.treat !== t) return;
+      await this.turnTo(t.x >= this.cx ? 1 : -1);
+      const { treatEatFrom: from, treatEatTo: to } = this.config;
+      await this.playClip('sniff', {
+        onFrame: (f) => this.player.setPropEaten(L.clamp((f.t - from) / (to - from), 0, 1)),
+      });
+      this.clearTreat();
+      this.lastAction = 'sniff';
+      await this.playClip('happy');
+    }
+
+    // ------------------------------------------------------------ follow me
+
+    setFollow(msg) {
+      if (!msg.active) {
+        this.follow = null;
+        this.notify();
+        return;
+      }
+      const now = Date.now();
+      if (!this.follow) {
+        this.follow = { x: msg.x, movedAt: now, lookedAt: 0 };
+        if (this.pose === 'sleep' && !this.pending) this.pending = { type: 'wake' };
+      } else {
+        if (Math.abs(msg.x - this.follow.x) > 3) this.follow.movedAt = now;
+        this.follow.x = msg.x;
+      }
+      if (this.walk && this.walk.follow) this.walk.target = this.followTarget();
+      this.notify();
+    }
+
+    followTarget() {
+      const r = this.range();
+      return L.clamp(this.follow.x, r.min, r.max);
+    }
+
+    async followStep() {
+      const f = this.follow;
+      const off = f.x < 0 ? 'left' : f.x > this.layout.width ? 'right' : null;
+      if (off && this.layout.edges[off]) {
+        await this.doWalk({ toward: off }); // the mouse is on the next screen
+        return;
+      }
+      const target = this.followTarget();
+      if (Math.abs(target - this.cx) > this.config.followSlackPx * this.layout.scale) {
+        await this.doWalk({ target, follow: true });
+        return;
+      }
+      if (Date.now() - f.movedAt > this.config.followLookAfterMs && f.lookedAt < f.movedAt) {
+        f.lookedAt = Date.now();
+        this.lastAction = 'look';
+        await this.playClip('look');
+        return;
+      }
+      await this.wait(500);
+    }
+
     mood() {
-      return L.moodAt(this.clock().getHours(), this.config.moods);
+      return L.scaleMood(L.moodAt(this.clock().getHours(), this.config.moods), this.prefs.moodStrength);
+    }
+
+    weightsFor(mood) {
+      const base = { ...this.config.weights, look: this.config.weights.look * this.prefs.lookMultiplier };
+      return L.applyMood(base, mood);
     }
 
     setUserIdle(idle) {
@@ -324,11 +461,21 @@
     // ------------------------------------------------------------ standing
 
     async standStep(req) {
-      // "Come here" may start her just out of sight; everything else starts on screen.
-      if (!(req && req.type === 'come')) this.clampIntoView();
+      // "Come here" and treats may start her just out of sight (walking in);
+      // everything else starts on screen.
+      const walksIn = (req && (req.type === 'come' || req.type === 'treat')) || (!req && this.treat);
+      if (!walksIn) this.clampIntoView();
       this.player.showPose('stand');
       if (req) {
         await this.perform(req.type, req);
+        return;
+      }
+      if (this.treat) {
+        await this.eatTreat(); // a bone is still waiting (e.g. after a drag)
+        return;
+      }
+      if (this.follow) {
+        await this.followStep();
         return;
       }
       if (this.userIdle) {
@@ -340,7 +487,7 @@
       const holdScale = mood ? mood.hold : 1;
       const why = await this.wait(L.randRange(this.rng, lo, hi) * holdScale * 1000);
       if (why !== 'timeout') return; // a request or idle change: handle it next step
-      const weights = this.tune ? this.config.tuneWeights : L.applyMood(this.config.weights, mood);
+      const weights = this.tune ? this.config.tuneWeights : this.weightsFor(mood);
       await this.perform(L.pickAction(this.rng, weights, this.lastAction));
     }
 
@@ -351,6 +498,9 @@
           return;
         case 'come':
           await this.comeTo(req.x);
+          return;
+        case 'treat':
+          await this.eatTreat();
           return;
         case 'nap':
           this.lastAction = 'nap';
@@ -431,6 +581,13 @@
     // "Come here": walk to x (window pixels), then look up at you. If she is
     // already close she just turns that way.
     async comeTo(x) {
+      await this.walkToSpot(x);
+      this.lastAction = 'look';
+      await this.playClip('look');
+    }
+
+    // Walk to window x (or just turn that way if it is too close to walk).
+    async walkToSpot(x) {
       const r = this.range();
       const target = L.clamp(x, r.min, r.max);
       const D = this.distances();
@@ -441,11 +598,10 @@
       } else if (Math.abs(distance) > 1) {
         await this.turnTo(Math.sign(distance));
       }
-      this.lastAction = 'look';
-      await this.playClip('look');
     }
 
-    async doWalk({ target = null } = {}) {
+    // toward: 'left' | 'right' walks off that side to the next screen.
+    async doWalk({ target = null, follow = false, toward = null } = {}) {
       const D = this.distances();
       const edges = this.layout.edges;
       const exits = ['left', 'right'].filter((side) => edges[side]);
@@ -453,8 +609,11 @@
       let dir;
       if (target !== null) {
         dir = target >= this.cx ? 1 : -1;
+      } else if (toward !== null) {
+        trip = true;
+        dir = toward === 'right' ? 1 : -1;
       } else {
-        if (exits.length > 0 && !this.tune && this.rng() < this.config.tripChance) {
+        if (exits.length > 0 && !this.tune && this.rng() < this.prefs.tripChance) {
           trip = true;
           dir = exits[Math.floor(this.rng() * exits.length)] === 'right' ? 1 : -1;
         } else {
@@ -475,6 +634,7 @@
       const w = {
         trip,
         target,
+        follow,
         cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...this.config.walkLoops),
         hitWall: false,
         ending: false,
@@ -584,7 +744,14 @@
             this.cx = L.entryPosition({ dir: this.dir, width: layout.width, extents: this.extents() });
             if (this.walk === w) {
               w.trip = false;
-              w.cyclesLeft = L.randInt(this.rng, 1, 3);
+              if (this.follow) {
+                // Following the mouse: keep going until she reaches it.
+                w.follow = true;
+                w.target = this.followTarget();
+                w.cyclesLeft = Infinity;
+              } else {
+                w.cyclesLeft = L.randInt(this.rng, 1, 3);
+              }
             } else {
               this.clampIntoView();
               if (!this.player.playing) this.player.showPose(this.pose);

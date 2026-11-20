@@ -180,3 +180,25 @@ test('shouldEndWalk with a target stops at the closest cycle', () => {
   assert.equal(L.shouldEndWalk({ ...args, cx: 1000, dir: 1, target: 1260 }).end, false);
   assert.equal(L.shouldEndWalk({ ...args, cx: 1000, dir: -1, target: 820 }).end, true);
 });
+
+test('scaleMood softens a mood towards no effect', () => {
+  const m = { name: 'night', weights: { nap: 6, walk: 0.4 }, hold: 1.5, nap: 3 };
+  assert.deepEqual(L.scaleMood(m, 0), { name: 'night', weights: { nap: 1, walk: 1 }, hold: 1, nap: 1 });
+  assert.deepEqual(L.scaleMood(m, 1).weights, { nap: 6, walk: 0.4 });
+  assert.equal(L.scaleMood(m, 0.5).weights.nap, 3.5);
+});
+
+test('treatPlan lines her eating nose up exactly with the bone', () => {
+  const args = { width: 3000, range: { min: 200, max: 2800 }, reach: 223, start: 94, loop: 135, stop: 154, edge: 30 };
+  const plan = L.treatPlan({ ...args, from: 500, bone: 1500 });
+  // She stops at 500 + 94 + n*135 + 154 and the bone sits 223 px beyond.
+  const n = (plan.stop - 500 - 94 - 154) / 135;
+  assert.equal(Number.isInteger(Math.round(n * 1e6) / 1e6), true);
+  assert.equal(plan.boneX, plan.stop + 223);
+  assert.ok(Math.abs(plan.boneX - 1500) <= 135 / 2);
+  // A bone right next to her goes to the nearest reachable spot instead.
+  const close = L.treatPlan({ ...args, from: 1500, bone: 1520 });
+  assert.ok(Math.abs(close.stop - 1500) >= 94 + 154 - 1e-9);
+  // Nothing fits on a tiny screen.
+  assert.equal(L.treatPlan({ ...args, width: 300, range: { min: 150, max: 150 }, from: 150, bone: 150 }), null);
+});

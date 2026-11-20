@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld('lulu', {
   onIdle: (callback) => subscribe('lulu:idle', callback),
   onRunState: (callback) => subscribe('lulu:run-state', callback),
   onTune: (callback) => subscribe('lulu:tune', callback),
+  onPrefs: (callback) => subscribe('lulu:prefs', callback),
+  onFollow: (callback) => subscribe('lulu:follow', callback),
 });

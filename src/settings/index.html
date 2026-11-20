@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
+  <title>Lulu settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <header>
+    <img src="../../assets/lulu_icon.png" alt="" width="44" height="44">
+    <div>
+      <h1>Lulu</h1>
+      <p id="version" class="muted"></p>
+    </div>
+  </header>
+
+  <main id="form" aria-busy="true">
+    <section>
+      <h2>Size</h2>
+      <div class="segmented" role="radiogroup" aria-label="Size">
+        <label><input type="radio" name="size" value="0.6"><span>Small</span></label>
+        <label><input type="radio" name="size" value="0.8"><span>Medium</span></label>
+        <label><input type="radio" name="size" value="1"><span>Large</span></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Personality</h2>
+      <div class="row">
+        <label for="lookMultiplier">Looks at you</label>
+        <output for="lookMultiplier" data-for="lookMultiplier"></output>
+        <input type="range" id="lookMultiplier" min="0.25" max="2" step="0.25">
+        <div class="ends"><span>Rarely</span><span>Often</span></div>
+      </div>
+      <div class="row">
+        <label for="moodStrength">Daily rhythm</label>
+        <output data-for="moodStrength"></output>
+        <input type="range" id="moodStrength" min="0" max="1" step="0.1">
+        <div class="ends"><span>Same all day</span><span>Lively mornings, sleepy nights</span></div>
+      </div>
+      <label class="switch"><input type="checkbox" id="noticeMouse"><span>Looks up when your mouse comes near</span></label>
+    </section>
+
+    <section>
+      <h2>Getting around</h2>
+      <div class="row">
+        <label for="walkSpeed">Walking speed</label>
+        <output data-for="walkSpeed"></output>
+        <input type="range" id="walkSpeed" min="60" max="200" step="5">
+        <div class="ends"><span>Slower</span><button type="button" id="walkSpeedReset" class="link">Use the original speed</button><span>Faster</span></div>
+        <p class="hint">If her feet look like they slide, nudge this until they stay planted.</p>
+      </div>
+      <label class="switch"><input type="checkbox" id="walkBetweenScreens"><span>Walks between screens</span></label>
+      <div class="row" data-needs="walkBetweenScreens">
+        <label for="tripChance">Visits other screens</label>
+        <output data-for="tripChance"></output>
+        <input type="range" id="tripChance" min="0" max="0.6" step="0.05">
+        <div class="ends"><span>Never</span><span>Often</span></div>
+      </div>
+      <label class="switch"><input type="checkbox" id="walkIn"><span>Walks in from the side when she appears</span></label>
+      <label class="switch"><input type="checkbox" id="avoidFullscreen"><span>Moves out of the way of fullscreen apps</span></label>
+    </section>
+
+    <section>
+      <h2>Follow me</h2>
+      <div class="row">
+        <label for="followSeconds">Follows you for</label>
+        <output data-for="followSeconds"></output>
+        <input type="range" id="followSeconds" min="30" max="300" step="15">
+        <div class="ends"><span>30 seconds</span><span>5 minutes</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Windows</h2>
+      <label class="switch"><input type="checkbox" id="startWithWindows"><span>Start Lulu with Windows</span></label>
+      <p id="startHint" class="hint" hidden>Only available in the installed app.</p>
+    </section>
+
+    <footer>
+      <button type="button" id="reset" class="secondary">Reset to defaults</button>
+      <p id="status" class="muted" role="status" aria-live="polite"></p>
+    </footer>
+  </main>
+
+  <script src="settings.js"></script>
+</body>
+</html>

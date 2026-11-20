@@ -146,7 +146,7 @@
       else if (!queuedLayout || next.seq > queuedLayout.seq) queuedLayout = next;
     });
 
-    const { manifest, settings, layout, tune } = await api.init();
+    const { manifest, settings, prefs, layout, tune } = await api.init();
     const canvas = document.getElementById('stage');
 
     let behaviour = null;
@@ -177,7 +177,7 @@
       config,
       api,
       extents: player.bodyExtents(config.alphaThreshold),
-      walkSpeed: settings.walkSpeed ?? manifest.walkSpeedPxPerSec,
+      prefs,
       tune,
       prepareLayout,
     });
@@ -190,6 +190,8 @@
 
     prepareLayout(layout);
     behaviour.applyLayout(layout, { xFraction: settings.xFraction });
+    // Walk in from the side at start-up, rather than popping into view.
+    if (prefs.walkIn && !tune) behaviour.walkInTo(behaviour.cx);
 
     onLayout = (next) => {
       prepareLayout(next);
@@ -201,6 +203,8 @@
     api.onCommand((cmd) => behaviour.command(cmd.name, cmd));
     api.onIdle((idle) => behaviour.setUserIdle(idle));
     api.onRunState((running) => behaviour.setRunning(running));
+    api.onPrefs((next) => behaviour.setPrefs(next));
+    api.onFollow((msg) => behaviour.setFollow(msg));
     if (tune) setupTune({ behaviour, el: document.getElementById('tune') });
 
     behaviour.start();

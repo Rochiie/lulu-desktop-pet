@@ -102,3 +102,19 @@ test('manifest validation names the problem', () => {
   delete m.clips.sniff;
   assert.throws(() => validateManifest(m), /clip "sniff" is missing/);
 });
+
+test('new preferences have safe ranges and defaults', () => {
+  const { prefsFor } = require('../src/main/settings');
+  const bad = sanitize({ tripChance: 2, lookMultiplier: 0, moodStrength: -1, followSeconds: 9999, noticeMouse: 'no', walkIn: 1 });
+  assert.equal(bad.tripChance, DEFAULTS.tripChance);
+  assert.equal(bad.lookMultiplier, DEFAULTS.lookMultiplier);
+  assert.equal(bad.moodStrength, DEFAULTS.moodStrength);
+  assert.equal(bad.followSeconds, DEFAULTS.followSeconds);
+  assert.equal(bad.noticeMouse, true);
+  assert.equal(bad.walkIn, true);
+  const good = sanitize({ tripChance: 0, lookMultiplier: 1.5, moodStrength: 0.3, followSeconds: 90.4, noticeMouse: false, walkIn: false });
+  assert.deepEqual([good.tripChance, good.lookMultiplier, good.moodStrength, good.followSeconds, good.noticeMouse, good.walkIn], [0, 1.5, 0.3, 90, false, false]);
+  const p = prefsFor({ ...DEFAULTS }, { walkSpeedPxPerSec: 125 });
+  assert.equal(p.walkSpeed, 125);
+  assert.equal(prefsFor({ ...DEFAULTS, walkSpeed: 110 }, { walkSpeedPxPerSec: 125 }).walkSpeed, 110);
+});

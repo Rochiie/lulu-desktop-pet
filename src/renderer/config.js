@@ -23,6 +23,19 @@
     // her nose or tail, at Large) and looks up at you, at most once per cooldown.
     noticeRadiusPx: 200,
     noticeCooldownMs: 30 * 1000,
+
+    // Follow me: she walks when the mouse is more than this far from her
+    // (window pixels at Large), and looks up once the mouse has been still
+    // this long.
+    followSlackPx: 200,
+    followLookAfterMs: 2500,
+
+    // Treats: in the sniff clip her nose touches the ground 223 clip pixels in
+    // front of her centre (measured from sniff.webm around 2–2.5 s), and the
+    // bone is "eaten" between these clip times (s).
+    treatNoseReach: 223,
+    treatEatFrom: 1.6,
+    treatEatTo: 2.7,
     walkLoops: [2, 6],
     napSeconds: [30, 120],
     // Share of walks that head off to the next screen (when there is one).

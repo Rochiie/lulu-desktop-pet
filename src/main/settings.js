@@ -16,6 +16,14 @@ const SIZE_OPTIONS = Object.freeze([
 
 const WALK_SPEED_RANGE = Object.freeze([20, 400]);
 
+// Number preferences shown as sliders in the Settings window: [min, max].
+const RANGES = Object.freeze({
+  tripChance: Object.freeze([0, 0.6]), // share of walks that visit another screen
+  lookMultiplier: Object.freeze([0.25, 2]), // how often she looks at you, x normal
+  moodStrength: Object.freeze([0, 1]), // 0 = same all day, 1 = full daily rhythm
+  followSeconds: Object.freeze([30, 300]), // how long "Follow me" lasts
+});
+
 const DEFAULTS = Object.freeze({
   size: 0.8,
   startWithWindows: false,
@@ -24,7 +32,19 @@ const DEFAULTS = Object.freeze({
   displayId: null,
   xFraction: 0.5,
   walkSpeed: null, // null = use walkSpeedPxPerSec from the manifest
+  tripChance: 0.25,
+  lookMultiplier: 1,
+  moodStrength: 1,
+  followSeconds: 60,
+  noticeMouse: true,
+  walkIn: true,
 });
+
+// Settings the user can change in the Settings window (and reset).
+const USER_KEYS = Object.freeze([
+  'size', 'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'walkSpeed',
+  'tripChance', 'lookMultiplier', 'moodStrength', 'followSeconds', 'noticeMouse', 'walkIn',
+]);
 
 const SAVE_DELAY_MS = 500;
 
@@ -32,9 +52,13 @@ function sanitize(raw) {
   const out = { ...DEFAULTS };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   if (SIZE_OPTIONS.some((o) => o.value === raw.size)) out.size = raw.size;
-  for (const key of ['startWithWindows', 'walkBetweenScreens', 'avoidFullscreen']) {
+  for (const key of ['startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'noticeMouse', 'walkIn']) {
     if (typeof raw[key] === 'boolean') out[key] = raw[key];
   }
+  for (const [key, [lo, hi]] of Object.entries(RANGES)) {
+    if (Number.isFinite(raw[key]) && raw[key] >= lo && raw[key] <= hi) out[key] = raw[key];
+  }
+  out.followSeconds = Math.round(out.followSeconds);
   if (Number.isSafeInteger(raw.displayId)) out.displayId = raw.displayId;
   if (Number.isFinite(raw.xFraction) && raw.xFraction >= 0 && raw.xFraction <= 1) {
     out.xFraction = raw.xFraction;
@@ -49,12 +73,26 @@ function sanitize(raw) {
   return out;
 }
 
+// What the pet window needs to know about the user's preferences.
+function prefsFor(values, manifest) {
+  return {
+    walkSpeed: values.walkSpeed === null ? manifest.walkSpeedPxPerSec : values.walkSpeed,
+    tripChance: values.tripChance,
+    lookMultiplier: values.lookMultiplier,
+    moodStrength: values.moodStrength,
+    followSeconds: values.followSeconds,
+    noticeMouse: values.noticeMouse,
+    walkIn: values.walkIn,
+  };
+}
+
 class Settings {
   constructor(file, log) {
     this.file = file;
     this.log = log;
     this.values = { ...DEFAULTS };
     this.timer = null;
+    this.onChange = null;
   }
 
   load() {
@@ -83,6 +121,7 @@ class Settings {
     this.values = sanitize({ ...this.values, ...patch });
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), SAVE_DELAY_MS);
+    if (this.onChange) this.onChange(this.values);
     return this.values;
   }
 
@@ -100,4 +139,4 @@ class Settings {
   }
 }
 
-module.exports = { Settings, sanitize, DEFAULTS, SIZE_OPTIONS, WALK_SPEED_RANGE };
+module.exports = { Settings, sanitize, prefsFor, DEFAULTS, USER_KEYS, RANGES, SIZE_OPTIONS, WALK_SPEED_RANGE };
