@@ -1,0 +1,115 @@
+{
+  "fps": 24,
+  "width": 532,
+  "height": 312,
+  "groundY": 305,
+  "facing": "right",
+  "clips": {
+    "walk_start": {
+      "file": "walk_start.webm",
+      "frames": 36,
+      "seconds": 1.5,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot; speed ramps 0 -> walkSpeed",
+      "loop": false
+    },
+    "walk_loop": {
+      "file": "walk_loop.webm",
+      "frames": 26,
+      "seconds": 1.083,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "loop while moving at walkSpeed",
+      "loop": true
+    },
+    "walk_stop": {
+      "file": "walk_stop.webm",
+      "frames": 59,
+      "seconds": 2.458,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot; speed ramps walkSpeed -> 0",
+      "loop": false
+    },
+    "sniff": {
+      "file": "sniff.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot, stationary",
+      "loop": false
+    },
+    "happy": {
+      "file": "happy.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot, played when clicked: tail wag and small hop",
+      "loop": false
+    },
+    "sit": {
+      "file": "sit.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: sits, stays, stands",
+      "loop": false
+    },
+    "look": {
+      "file": "look.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: looks at the user, small wag",
+      "loop": false
+    },
+    "lie_down": {
+      "file": "lie_down.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "sleep",
+      "use": "one-shot transition",
+      "loop": false
+    },
+    "sleep_loop": {
+      "file": "sleep_loop.webm",
+      "frames": 120,
+      "seconds": 5.0,
+      "startPose": "sleep",
+      "endPose": "sleep",
+      "use": "loop seamlessly",
+      "loop": true
+    },
+    "wake_up": {
+      "file": "wake_up.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "sleep",
+      "endPose": "stand",
+      "use": "one-shot transition",
+      "loop": false
+    },
+    "stretch": {
+      "file": "stretch.webm",
+      "frames": 121,
+      "seconds": 5.042,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: play bow then shake",
+      "loop": false
+    }
+  },
+  "notes": "All clips: transparent VP9 WebM (alpha), 24fps, same canvas size and same ground line, Lulu facing right. Flip horizontally for left-facing.",
+  "standingCenterX": 289,
+  "walkSpeedPxPerSec": 125,
+  "poses": {
+    "stand": "walk_start_first.png",
+    "sleep": "sleep_loop_first.png"
+  }
+}

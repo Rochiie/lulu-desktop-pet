@@ -1,0 +1,52 @@
+{
+  "name": "lulu-desktop-pet",
+  "productName": "Lulu",
+  "version": "1.0.0",
+  "description": "Lulu the miniature dachshund, living on your Windows desktop.",
+  "author": "Cody",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "tune": "electron . --tune",
+    "test": "node --test \"test/*.test.js\"",
+    "dist": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.cody.lulu",
+    "productName": "Lulu",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/lulu_icon.ico"
+    },
+    "nsis": {
+      "artifactName": "Lulu Setup.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "installerIcon": "assets/lulu_icon.ico",
+      "uninstallerIcon": "assets/lulu_icon.ico",
+      "shortcutName": "Lulu"
+    }
+  },
+  "dependencies": {
+    "koffi": "3.3.6"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "allowScripts": {
+    "koffi@3.3.6": true,
+    "electron-winstaller": false
+  }
+}
