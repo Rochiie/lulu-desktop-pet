@@ -58,14 +58,30 @@ function buildMenuTemplate(s, a) {
       enabled: s.canStartWithWindows,
       click: (item) => a.setStartWithWindows(item.checked),
     },
+    updateItem(s, a),
     { type: 'separator' },
     { label: 'Hide for 1 hour', enabled: !s.hiddenByUser, click: () => a.hideForAnHour() },
     { label: 'Show Lulu', enabled: s.hiddenByUser, click: () => a.show() },
     { type: 'separator' },
+    { label: `Lulu ${s.version}`, enabled: false },
     { label: 'Quit', click: () => a.quit() },
   );
 
   return template;
+}
+
+function updateItem(s, a) {
+  if (!s.updatesAvailable) return { label: 'Check for updates (installed app only)', enabled: false };
+  switch (s.updateStatus) {
+    case 'ready':
+      return { label: `Restart to update (${s.updateVersion})`, click: () => a.installUpdate() };
+    case 'downloading':
+      return { label: `Downloading update (${s.updateVersion})…`, enabled: false };
+    case 'checking':
+      return { label: 'Checking for updates…', enabled: false };
+    default:
+      return { label: 'Check for updates', click: () => a.checkForUpdates() };
+  }
 }
 
 module.exports = { buildMenuTemplate };

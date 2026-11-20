@@ -17,6 +17,7 @@ const displaysLib = require('./displays');
 const { createPetWindow } = require('./window');
 const { createFullscreenDetector } = require('./fullscreen');
 const { buildMenuTemplate } = require('./menu');
+const { createUpdater } = require('./updater');
 
 const TUNE = process.argv.includes('--tune');
 const ASSETS_DIR = path.join(__dirname, '..', '..', 'assets');
@@ -38,6 +39,7 @@ const state = {
   win: null,
   tray: null,
   detector: null,
+  updater: null,
   displayId: null,
   layoutSeq: 0,
   rendererReady: false,
@@ -372,8 +374,15 @@ const menuActions = {
   setStartWithWindows,
   hideForAnHour,
   show: showByUser,
+  checkForUpdates: () => state.updater.checkNow(),
+  installUpdate: () => state.updater.installNow(),
   quit: () => app.quit(),
 };
+
+function notify(message) {
+  if (!state.tray || state.tray.isDestroyed()) return;
+  state.tray.displayBalloon({ title: 'Lulu', content: message, iconType: 'custom', icon: ICON_PATH });
+}
 
 function menuState() {
   const s = state.settings.get();
@@ -385,6 +394,10 @@ function menuState() {
     avoidFullscreen: s.avoidFullscreen,
     fullscreenAvailable: state.detector !== null,
     hiddenByUser: state.hiddenByUser,
+    version: app.getVersion(),
+    updatesAvailable: state.updater !== null,
+    updateStatus: state.updater ? state.updater.status : null,
+    updateVersion: state.updater ? state.updater.version : null,
     displays: displaysLib
       .menuEntries(snapshotDisplays())
       .map((d) => ({ ...d, current: d.id === state.displayId })),
@@ -559,6 +572,7 @@ async function start() {
   win.webContents.on('render-process-gone', (_event, details) => onRendererGone(details));
 
   createTray();
+  state.updater = createUpdater({ app, log, onChange: refreshTray, notify });
   watchDisplays();
   watchPower();
   startPolling();
@@ -584,6 +598,7 @@ if (!app.requestSingleInstanceLock()) {
     clearTimeout(state.hideTimer);
     clearTimeout(state.displayChangeTimer);
     globalShortcut.unregisterAll();
+    if (state.updater) state.updater.stop();
     if (state.settings) state.settings.flush();
   });
   app.whenReady().then(start).catch(fatal);

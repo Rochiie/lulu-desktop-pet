@@ -11,7 +11,8 @@
     "start": "electron .",
     "tune": "electron . --tune",
     "test": "node --test \"test/*.test.js\"",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis --publish never",
+    "release": "electron-builder --win nsis --publish always"
   },
   "build": {
     "appId": "com.cody.lulu",
@@ -39,6 +40,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "6.8.11",
     "koffi": "3.3.6"
   },
   "devDependencies": {
