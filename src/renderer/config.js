@@ -24,6 +24,20 @@
     // Keep her this far (window pixels) from the screen edges.
     edgeMarginPx: 12,
 
+    // Turning around: she narrows to this share of her width, flips, and
+    // widens again, with a small hop (clip pixels).
+    turnMs: 420,
+    turnMinSquash: 0.08,
+    turnLiftPx: 7,
+
+    // Petting: rub the mouse back and forth over her. A rub is this many
+    // changes of direction, each after at least minTravel px, within windowMs.
+    petMinTravelPx: 10,
+    petReversals: 3,
+    petWindowMs: 1500,
+    petCooldownMs: 6000, // at most one wag per this long while you keep petting
+    petNapExtendMs: 30 * 1000, // petting a napping Lulu lets her sleep at least this much longer
+
     // Tune mode (npm run tune).
     tuneHoldSeconds: [1, 2],
     tuneWeights: Object.freeze({ walk: 1 }),

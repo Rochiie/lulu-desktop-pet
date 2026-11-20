@@ -119,6 +119,33 @@ test('chooseDirection heads for more room', () => {
   assert.equal(L.chooseDirection(seq(0.8), 500, 500), 1);
 });
 
+const rubOptions = { minTravelPx: 10, reversals: 3, windowMs: 1500 };
+
+function rubAt(detector, xs, stepMs = 30) {
+  return xs.map((x, i) => detector.move(x, i * stepMs));
+}
+
+test('rubbing back and forth counts as petting', () => {
+  const d = L.createRubDetector(rubOptions);
+  const hits = rubAt(d, [100, 120, 140, 120, 100, 120, 140, 120, 100]);
+  assert.equal(hits.filter(Boolean).length, 1);
+});
+
+test('moving across her in one direction is not petting', () => {
+  const d = L.createRubDetector(rubOptions);
+  assert.ok(rubAt(d, [100, 120, 140, 160, 180, 200, 220, 240]).every((h) => !h));
+});
+
+test('tiny jitters are not petting', () => {
+  const d = L.createRubDetector(rubOptions);
+  assert.ok(rubAt(d, [100, 103, 100, 103, 100, 103, 100, 103, 100]).every((h) => !h));
+});
+
+test('slow back-and-forth outside the time window is not petting', () => {
+  const d = L.createRubDetector(rubOptions);
+  assert.ok(rubAt(d, [100, 130, 100, 130, 100], 1000).every((h) => !h));
+});
+
 test('crossed and entryPosition put her just out of sight', () => {
   assert.equal(L.crossed({ cx: 1199, dir: 1, width: 1000, extents }), false);
   assert.equal(L.crossed({ cx: 1201, dir: 1, width: 1000, extents }), true);

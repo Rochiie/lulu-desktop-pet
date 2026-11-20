@@ -42,6 +42,7 @@ class FakePlayer {
 
   showPose() {
     if (this.active) throw new Error('showPose while a clip is playing');
+    if (this.turning) throw new Error('showPose while turning');
   }
 
   draw() {}
@@ -50,12 +51,36 @@ class FakePlayer {
     if (this.active) this.active.loop = false;
   }
 
+  turn({ onFlip }) {
+    if (this.active || this.turning) return Promise.reject(new Error('turn while busy'));
+    this.history.push('(turn)');
+    return new Promise((resolve, reject) => {
+      const t = { resolve, reject, done: false };
+      this.turning = t;
+      setImmediate(() => {
+        if (t.done) return;
+        onFlip();
+        setImmediate(() => this.endTurn(t, null));
+      });
+    });
+  }
+
+  endTurn(t, err) {
+    if (t.done) return;
+    t.done = true;
+    this.turning = null;
+    if (err) t.reject(err);
+    else t.resolve();
+  }
+
   stop() {
+    if (this.turning) this.endTurn(this.turning, new Interrupt());
     if (this.active) this.finish(this.active, new Interrupt());
   }
 
   play(name, { loop = false, onFrame = null } = {}) {
     if (this.active) return Promise.reject(new Error(`play ${name} while ${this.active.name} plays`));
+    if (this.turning) return Promise.reject(new Error(`play ${name} while turning`));
     this.history.push(name);
     this.listeners.forEach((fn) => fn(name));
     const T = manifest.clips[name].seconds;
@@ -159,9 +184,23 @@ function inRange(p) {
 
 test('walks stay on screen and turn around at the edges', async () => {
   const t = setup({ config: { weights: { walk: 1 } }, xFraction: 0.2 });
+  // Every change of facing must happen inside a turn animation.
+  let dir = t.behaviour.dir;
+  const instantFlips = [];
+  Object.defineProperty(t.behaviour, 'dir', {
+    get: () => dir,
+    set: (v) => {
+      if (v !== dir && !t.player.turning) instantFlips.push(t.player.history.length);
+      dir = v;
+    },
+  });
   await until(() => t.positions.length >= 25);
   t.stop();
   assert.deepEqual(t.errors, []);
+  assert.deepEqual(instantFlips, [], 'she flipped without turning');
+  assert.ok(t.player.history.includes('(turn)'));
+  // A turn only ever happens while standing: never inside a walk.
+  assert.doesNotMatch(t.player.history.join(' '), /walk_start \(turn\)|walk_loop \(turn\)/);
   for (const p of t.positions) assert.ok(inRange(p), `off screen: ${JSON.stringify(p)}`);
   // She must have used both directions.
   assert.ok(t.positions.some((p) => p.dir > 0) && t.positions.some((p) => p.dir < 0));
@@ -214,6 +253,28 @@ test('clicking a sleeping Lulu plays wake_up then happy', async () => {
   const h = t.player.history;
   const i = h.lastIndexOf('happy');
   assert.deepEqual(h.slice(i - 2, i + 1), ['sleep_loop', 'wake_up', 'happy']);
+});
+
+test('petting an awake Lulu makes her wag, but not over and over', async () => {
+  const t = setup({ config: { weights: { look: 1, sniff: 1 } } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.pet();
+  t.behaviour.pet(); // still rubbing: within the cooldown
+  await t.player.next('happy');
+  await new Promise((r) => setTimeout(r, 100));
+  t.stop();
+  assert.equal(t.player.history.filter((c) => c === 'happy').length, 1);
+});
+
+test('petting a napping Lulu keeps her asleep a bit longer', async () => {
+  const t = setup({ config: { weights: { nap: 1 }, napSeconds: [0.05, 0.05], petNapExtendMs: 300 } });
+  await t.player.next('sleep_loop');
+  const before = t.behaviour.napEnds;
+  t.behaviour.pet();
+  assert.ok(t.behaviour.napEnds >= before + 200);
+  assert.equal(t.behaviour.pending, null); // no wake-up, no wag
+  await t.player.next('wake_up');
+  t.stop();
 });
 
 test('trips cross to the next screen and come in from the other side', async () => {

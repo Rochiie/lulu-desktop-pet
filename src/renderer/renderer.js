@@ -17,10 +17,16 @@
     let drag = null;
     let lastCheck = 0;
     let checkTimer = null;
+    const rub = window.LuluLogic.createRubDetector({
+      minTravelPx: config.petMinTravelPx,
+      reversals: config.petReversals,
+      windowMs: config.petWindowMs,
+    });
 
     const setInteractive = (on) => {
       if (on === interactive) return;
       interactive = on;
+      if (!on) rub.reset();
       api.setInteractive(on);
       document.body.classList.toggle('over-lulu', on);
     };
@@ -63,8 +69,17 @@
 
     window.addEventListener('pointermove', (event) => {
       mouse = { x: event.clientX, y: event.clientY };
-      if (drag && event.pointerId === drag.id) onDragMove(event);
-      else scheduleCheck();
+      if (drag && event.pointerId === drag.id) {
+        onDragMove(event);
+        return;
+      }
+      // Rubbing over her with no button held is petting.
+      if (interactive && event.buttons === 0) {
+        if (rub.move(event.clientX, event.timeStamp)) behaviour.pet();
+      } else {
+        rub.reset();
+      }
+      scheduleCheck();
     });
     document.documentElement.addEventListener('pointerleave', () => {
       mouse = null;

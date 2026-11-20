@@ -121,7 +121,49 @@
     return dir > 0 ? -extents.front - 1 : width + extents.front + 1;
   }
 
+  // Spots petting: the mouse rubbed back and forth. Feed it x positions with
+  // timestamps (ms); it returns true once it has seen `reversals` changes of
+  // direction, each after at least `minTravelPx` of movement, within
+  // `windowMs`, then starts counting afresh.
+  function createRubDetector({ minTravelPx, reversals, windowMs }) {
+    let dir = 0;
+    let travel = 0;
+    let lastX = null;
+    let marks = [];
+    const reset = () => {
+      dir = 0;
+      travel = 0;
+      lastX = null;
+      marks = [];
+    };
+    const move = (x, t) => {
+      if (lastX === null) {
+        lastX = x;
+        return false;
+      }
+      const dx = x - lastX;
+      lastX = x;
+      if (dx === 0) return false;
+      const d = Math.sign(dx);
+      if (d === dir) {
+        travel += Math.abs(dx);
+        return false;
+      }
+      if (dir !== 0 && travel >= minTravelPx) marks.push(t);
+      dir = d;
+      travel = Math.abs(dx);
+      marks = marks.filter((m) => t - m <= windowMs);
+      if (marks.length >= reversals) {
+        reset();
+        return true;
+      }
+      return false;
+    };
+    return { move, reset };
+  }
+
   return {
+    createRubDetector,
     clamp,
     randRange,
     randInt,

@@ -37,6 +37,7 @@
       this.napEnds = 0;
       this.pending = null; // { type } waiting for the next safe point
       this.lastAction = null;
+      this.lastPet = -Infinity;
       this.walk = null; // the walk in progress
       this.crossing = false;
 
@@ -177,6 +178,20 @@
       this.savePosition();
       if (this.pose === 'sleep') this.pending = { type: 'wake' };
       this.openGate();
+    }
+
+    // Rubbed with the mouse. Awake: she wags (happy). Asleep: she stays
+    // asleep and her nap gets a little longer.
+    pet() {
+      if (this.dragging) return;
+      const now = Date.now();
+      if (this.pose === 'sleep') {
+        if (!this.idleSleep) this.napEnds = Math.max(this.napEnds, now + this.config.petNapExtendMs);
+        return;
+      }
+      if (now - this.lastPet < this.config.petCooldownMs) return;
+      this.lastPet = now;
+      this.request('happy');
     }
 
     // ------------------------------------------------------------ control flow
@@ -379,10 +394,7 @@
         trip = false;
         if (!fits(dir)) return false;
       }
-      if (dir !== this.dir) {
-        this.dir = dir; // turn only while standing
-        this.player.showPose('stand');
-      }
+      await this.turnTo(dir); // turn only while standing
 
       const w = {
         trip,
@@ -406,12 +418,24 @@
         this.walk = null;
         this.onNotify = null;
       }
-      if (w.hitWall) {
-        this.dir = -this.dir; // reached the edge: turn around
-        this.player.showPose('stand');
-      }
+      if (w.hitWall) await this.turnTo(-this.dir); // reached the edge: turn around
       this.savePosition();
       return true;
+    }
+
+    // Turn around on the spot (standing pose only).
+    async turnTo(dir) {
+      if (dir === this.dir) return;
+      this.player.showPose('stand');
+      await this.player.turn({
+        durationMs: this.config.turnMs,
+        liftPx: this.config.turnLiftPx,
+        minSquash: this.config.turnMinSquash,
+        onFlip: () => {
+          this.dir = dir;
+        },
+      });
+      this.player.showPose('stand');
     }
 
     // Move her by exactly the distance the animation covered since the last

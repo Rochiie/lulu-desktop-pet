@@ -65,6 +65,8 @@
       this.videos = new Map();
       this.poses = new Map();
       this.active = null;
+      this.turning = null;
+      this.effect = null; // { squash, lift } while turning around
       this.source = null; // what is on the canvas now: a <video> or a pose <img>
       this.dpr = 1;
       this.onDraw = null;
@@ -172,6 +174,7 @@
 
     showPose(pose) {
       if (this.active) throw new Error(`showPose(${pose}) while ${this.active.name} is playing`);
+      if (this.turning) throw new Error(`showPose(${pose}) while turning`);
       const img = this.poses.get(pose);
       if (!img) throw new Error(`Unknown pose ${pose}`);
       this.source = img;
@@ -186,6 +189,7 @@
       if (this.active) {
         return Promise.reject(new Error(`Cannot play ${name}: ${this.active.name} is still playing`));
       }
+      if (this.turning) return Promise.reject(new Error(`Cannot play ${name} while turning`));
       const video = this.videos.get(name);
       if (!video) return Promise.reject(new Error(`Unknown clip ${name}`));
       return new Promise((resolve, reject) => {
@@ -208,8 +212,59 @@
       if (this.active) this.active.video.loop = false;
     }
 
+    // Turn around on the spot, using the current (standing) pose: she narrows
+    // as if rotating side-on to front-on, flips at the narrowest point, widens
+    // again facing the other way, with a small hop. onFlip runs at the
+    // midpoint and should change her facing. Rejects with Interrupt on stop().
+    turn({ durationMs, liftPx, minSquash, onFlip }) {
+      if (this.active) return Promise.reject(new Error(`Cannot turn while ${this.active.name} is playing`));
+      if (this.turning) return Promise.reject(new Error('Already turning'));
+      return new Promise((resolve, reject) => {
+        const t = { resolve, reject, rafId: null, done: false };
+        this.turning = t;
+        let start = null;
+        let flipped = false;
+        const frame = (now) => {
+          t.rafId = null;
+          if (t.done) return;
+          if (start === null) start = now;
+          const p = Math.min(1, (now - start) / durationMs);
+          const eased = p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p); // ease in-out
+          if (!flipped && eased >= 0.5) {
+            flipped = true;
+            try {
+              onFlip();
+            } catch (err) {
+              this._endTurn(t, err);
+              return;
+            }
+          }
+          this.effect = {
+            squash: minSquash + (1 - minSquash) * Math.abs(Math.cos(Math.PI * eased)),
+            lift: liftPx * Math.sin(Math.PI * p),
+          };
+          this.draw();
+          if (p >= 1) this._endTurn(t, null);
+          else t.rafId = requestAnimationFrame(frame);
+        };
+        t.rafId = requestAnimationFrame(frame);
+      });
+    }
+
+    _endTurn(t, err) {
+      if (t.done) return;
+      t.done = true;
+      if (t.rafId !== null) cancelAnimationFrame(t.rafId);
+      if (this.turning === t) this.turning = null;
+      this.effect = null;
+      this.draw();
+      if (err) t.reject(err);
+      else t.resolve();
+    }
+
     stop() {
       if (this.active) this._finish(this.active, new Interrupt());
+      if (this.turning) this._endTurn(this.turning, new Interrupt());
     }
 
     draw() {
@@ -220,8 +275,10 @@
       if (src && !(src instanceof HTMLVideoElement && src.readyState < HAVE_CURRENT_DATA)) {
         const { cx, dir, scale } = this.view();
         const k = this.dpr * scale;
+        const squash = this.effect ? this.effect.squash : 1;
+        const lift = this.effect ? this.effect.lift * k : 0;
         // Flip around her centre point so turning never shifts her sideways.
-        ctx.setTransform(k * dir, 0, 0, k, this.dpr * cx, 0);
+        ctx.setTransform(k * dir * squash, 0, 0, k, this.dpr * cx, -lift);
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
       if (this.onDraw) this.onDraw();
