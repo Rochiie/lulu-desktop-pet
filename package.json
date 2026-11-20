@@ -1,7 +1,7 @@
 {
   "name": "lulu-desktop-pet",
   "productName": "Lulu",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Lulu the miniature dachshund, living on your Windows desktop.",
   "author": "Cody",
   "license": "UNLICENSED",
@@ -37,7 +37,15 @@
       "installerIcon": "assets/lulu_icon.ico",
       "uninstallerIcon": "assets/lulu_icon.ico",
       "shortcutName": "Lulu"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Rochiie",
+        "repo": "lulu-desktop-pet",
+        "releaseType": "release"
+      }
+    ]
   },
   "dependencies": {
     "electron-updater": "6.8.11",
@@ -50,5 +58,9 @@
   "allowScripts": {
     "koffi@3.3.6": true,
     "electron-winstaller": false
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rochiie/lulu-desktop-pet.git"
   }
 }
