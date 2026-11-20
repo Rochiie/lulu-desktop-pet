@@ -81,16 +81,25 @@ First and last frame: `stand_facing_right_on_green.png`.
 > The dog barks two or three times, with a small bounce of its front legs on each bark, then
 > stands still again.
 
-**12. Run (three clips)**
-Running needs a start, a repeating loop and a stop, like her walk:
-- `run_start` (about 1 second). First frame: `stand_facing_right_on_green.png`.
-  > The dog breaks from standing into a happy gallop, running in place (the camera tracks it, so
-  > it stays in the middle of the frame).
-- `run_loop` (about half a second). One full gallop stride that **loops seamlessly**: the last
-  frame flows straight into the first.
-  > The dog gallops in place, one full stride.
-- `run_stop` (about 1.5 seconds). Last frame: `stand_facing_right_on_green.png`.
-  > The dog slows from a gallop to a stop and stands still.
+**12. Zoomies (two videos)** (`run_start`, `run_stop`)
+The camera follows her, so she gallops "on the spot" in the middle of the frame; Lulu
+moves her across your screen. Keep the background plain green with no floor texture.
+- `run_start` (5 seconds). First frame: `stand_facing_right_on_green.png`. No last frame.
+  > The dog suddenly bursts from standing into an excited, fast gallop to the right, ears
+  > flying, and keeps galloping steadily for the rest of the clip. The camera tracks
+  > alongside so the dog stays in the middle of the frame, in side profile.
+- `run_stop` (5 seconds). Last frame: `stand_facing_right_on_green.png`. No first frame.
+  > The dog is galloping fast to the right, then slows to a trot, then a walk, and stops,
+  > standing still in side profile, panting happily. The camera tracks alongside so the dog
+  > stays in the middle of the frame.
+
+I cut one seamless gallop stride out of these to make the repeating loop.
+
+**13. Dig** (`dig`, about 4 seconds)
+First and last frame: `stand_facing_right_on_green.png`.
+> The dog puts its nose down and digs eagerly at the floor in front of it with both front
+> paws, quick alternating scrapes, then stops, lifts its head and stands still again. No
+> dirt, no hole, no particles: the floor stays clean and flat.
 
 ## Turning a video into a Lulu clip
 
@@ -100,6 +109,15 @@ From the project folder (needs ffmpeg: `winget install Gyan.FFmpeg`):
 npm run make-clip -- "C:\path\to\video.mp4" clip_name
 npm run make-clip -- "C:\path\to\turn.mp4" turn --ends-facing left
 ```
+
+For a run (two videos filmed with the camera tracking her):
+
+```
+npm run make-clip -- --run "C:path	oun-start.mp4" "C:path	oun-stop.mp4" run
+```
+
+This writes `run_start`, `run_loop` and `run_stop`, and prints their manifest
+entries and root motion (paste the root motion into `src/renderer/root-motion.js`).
 
 It removes the green background and the watermark, lines her up with her
 standing pose, undoes any camera zoom, trims the still frames, blends the ends

@@ -13,7 +13,22 @@
     // Tricks (extra clips). Each is used only if its clip is in the manifest.
     // trickWeights join the random actions above; the shares below are how
     // often a trick replaces the usual reaction.
-    trickWeights: Object.freeze({ head_tilt: 6, play: 6, roll_over: 3, paw: 3, beg: 2 }),
+    trickWeights: Object.freeze({
+      head_tilt: 6, play: 6, roll_over: 3, paw: 3, beg: 2, yawn: 3, scratch: 3, dig: 3,
+    }),
+    // Zoomies (the run clips): a dash at full gallop, now and then, when there
+    // is room for it (or another screen to run onto). runLoops: gallop strides
+    // before slowing down, unless she is heading for another screen.
+    zoomiesWeight: 3,
+    runLoops: [2, 5],
+    // Her real gallop (about 900 px/s at Large) needs more room than most
+    // screens have, so above runFullSpeedBelow clip px per frame only
+    // runSpeedShare of the extra speed carries her forward. Below that (breaking
+    // into the run, slowing down) her paws stay exactly planted; at full
+    // gallop her legs are a blur and she is mostly off the ground.
+    runFullSpeedBelow: 12,
+    runSpeedShare: 0.5,
+    yawnBeforeNap: 0.5, // yawn before lying down (sometimes)
     headTiltShare: 0.4, // noticing you: head tilt instead of a look
     rollOverShare: 0.35, // petting: roll over for a belly rub instead of a wag
     pawShare: 0.3, // clicking her: offer a paw instead of a wag
@@ -23,10 +38,10 @@
     // Moods through the day. weights multiply the action weights above; hold
     // and nap multiply how long she stands still and how long she naps.
     moods: Object.freeze([
-      Object.freeze({ name: 'morning', from: 6, to: 11, weights: { walk: 1.3, stretch: 1.6, nap: 0.3 }, hold: 0.8, nap: 0.8 }),
+      Object.freeze({ name: 'morning', from: 6, to: 11, weights: { walk: 1.3, stretch: 1.6, nap: 0.3, zoomies: 2, yawn: 0.5 }, hold: 0.8, nap: 0.8 }),
       Object.freeze({ name: 'day', from: 11, to: 18, weights: {}, hold: 1, nap: 1 }),
-      Object.freeze({ name: 'evening', from: 18, to: 22, weights: { walk: 0.7, sit: 1.3, nap: 2.5 }, hold: 1.3, nap: 1.5 }),
-      Object.freeze({ name: 'night', from: 22, to: 6, weights: { walk: 0.4, look: 0.6, sniff: 0.5, nap: 6 }, hold: 1.5, nap: 3 }),
+      Object.freeze({ name: 'evening', from: 18, to: 22, weights: { walk: 0.7, sit: 1.3, nap: 2.5, yawn: 2, zoomies: 0.6 }, hold: 1.3, nap: 1.5 }),
+      Object.freeze({ name: 'night', from: 22, to: 6, weights: { walk: 0.4, look: 0.6, sniff: 0.5, nap: 6, yawn: 3, zoomies: 0.15, dig: 0.4 }, hold: 1.5, nap: 3 }),
     ]),
 
     // She notices the mouse coming near (within this many window pixels of
@@ -54,6 +69,25 @@
     strideRange: [0.88, 1.12],
     bowlEdgePx: 40,
     treatEatFrom: 1.6,
+
+    // Dog bed: she naps in it when it is out. Her body is lined up over it
+    // exactly (same stride stretching as the bowl). bedPadPx: clip pixels of
+    // bed either side of her lying body.
+    bedPadPx: 26,
+    bedEdgePx: 20,
+
+    // Squeaky toy (a ball). In the play clip her nose reaches the floor about
+    // 141 clip pixels in front of her centre (frames 66-70), so she stops with
+    // the ball centre toyNoseReach in front of her. On toyNudgeFrames she
+    // nudges it: [frame, push in clip px/s].
+    toyWeight: 5,
+    toyNoseReach: 150,
+    toyNudgeFrames: Object.freeze([Object.freeze([45, 25]), Object.freeze([69, 170])]),
+
+    // Snow: 'auto' means December only. Flakes per 100 px of screen width.
+    snowMonths: Object.freeze([11]), // 0-based: December
+    snowFlakesPer100Px: 4,
+    snowCheckMs: 10 * 60 * 1000, // how often 'auto' checks the date
     treatEatTo: 2.7,
     // Walk cycles per walk. Her real stride is long (about 322 px per cycle
     // at Large), so a few cycles already cover a good stretch of screen.
@@ -70,6 +104,7 @@
     hitRadiusPx: 4, // also count pixels this close to the cursor, so she is easy to grab
     hitCheckMs: 50, // at most one hit-test this often
     dragThresholdPx: 5,
+    throwSampleMs: 90, // a throw takes its speed from the last this-many ms of the drag
 
     // Keep her this far (window pixels) from the screen edges.
     edgeMarginPx: 12,

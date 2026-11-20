@@ -13,7 +13,7 @@
   // (forwarding moves to us) until the cursor is over one of her pixels.
   function setupPointer({ canvas, player, behaviour, hitTester, config }) {
     let interactive = false;
-    let over = null; // 'lulu' | 'bowl' | null
+    let over = null; // 'lulu' | 'toy' | 'bowl' | 'bed' | null
     let mouse = null;
     let drag = null;
     let lastCheck = 0;
@@ -41,7 +41,9 @@
         return;
       }
       if (hitTester.hit(player.source, { ...behaviour.view(), size: player.displaySize() }, mouse.x, mouse.y)) over = 'lulu';
+      else if (player.toyHit(mouse.x, mouse.y)) over = 'toy';
       else if (player.bowlHit(mouse.x, mouse.y)) over = 'bowl';
+      else if (behaviour.pose !== 'sleep' && player.bedHit(mouse.x, mouse.y)) over = 'bed'; // not while she sleeps in it
       else over = null;
       setInteractive(over !== null);
     };
@@ -54,13 +56,32 @@
 
     const onDragMove = (event) => {
       const dx = event.clientX - drag.startX;
-      if (!drag.moved && Math.abs(dx) > config.dragThresholdPx) {
+      const dy = event.clientY - drag.startY;
+      // Her ball can be picked up and moved any way; the rest slide sideways.
+      const far = drag.kind === 'toy' ? Math.hypot(dx, dy) : Math.abs(dx);
+      if (!drag.moved && far > config.dragThresholdPx) {
         drag.moved = true;
         if (drag.kind === 'lulu') behaviour.beginDrag();
       }
       if (!drag.moved) return;
       if (drag.kind === 'lulu') behaviour.dragTo(drag.startX0 + dx);
-      else behaviour.moveBowl(drag.startX0 + dx);
+      else if (drag.kind === 'bowl') behaviour.moveBowl(drag.startX0 + dx);
+      else if (drag.kind === 'bed') behaviour.moveBed(drag.startX0 + dx);
+      else {
+        behaviour.holdToy(drag.startX0 + dx, drag.startY0 + dy);
+        drag.samples.push({ x: event.clientX, y: event.clientY, t: event.timeStamp });
+        while (drag.samples.length > 2 && event.timeStamp - drag.samples[0].t > config.throwSampleMs) drag.samples.shift();
+      }
+    };
+
+    // Throw velocity (window px/s, up positive) from the last moments of a drag.
+    const throwVelocity = (samples, now) => {
+      const recent = samples.filter((p) => now - p.t <= config.throwSampleMs);
+      if (recent.length < 2) return { vx: 0, vy: 0 };
+      const a = recent[0];
+      const b = recent[recent.length - 1];
+      const dt = Math.max(16, b.t - a.t) / 1000;
+      return { vx: (b.x - a.x) / dt, vy: -(b.y - a.y) / dt };
     };
 
     const endPointer = (event, cancelled) => {
@@ -69,8 +90,18 @@
       drag = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       if (finished.kind === 'bowl') {
-        if (finished.moved) api.saveBowl(behaviour.prefs.bowlX);
+        if (finished.moved) api.savePlace('bowlX', behaviour.prefs.bowlX);
         else if (!cancelled) behaviour.request('drink'); // clicking her bowl sends her for a drink
+      } else if (finished.kind === 'bed') {
+        if (finished.moved) api.savePlace('bedX', behaviour.prefs.bedX);
+        else if (!cancelled) behaviour.request('nap'); // clicking her bed sends her for a nap
+      } else if (finished.kind === 'toy') {
+        if (finished.moved) {
+          const v = cancelled ? { vx: 0, vy: 0 } : throwVelocity(finished.samples, event.timeStamp);
+          behaviour.releaseToy(v.vx, v.vy);
+        } else if (!cancelled) {
+          behaviour.pokeToy(); // a squeak, and she comes to play
+        }
       } else if (finished.moved) {
         behaviour.endDrag();
       } else if (!cancelled) {
@@ -101,8 +132,22 @@
     });
     canvas.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || !interactive || over === null) return;
-      const startX0 = over === 'lulu' ? behaviour.cx : player.bowl.x;
-      drag = { kind: over, id: event.pointerId, startX: event.clientX, startX0, moved: false };
+      const start = {
+        lulu: () => ({ x: behaviour.cx, y: 0 }),
+        bowl: () => ({ x: player.bowl.x, y: 0 }),
+        bed: () => ({ x: player.bed.x, y: 0 }),
+        toy: () => player.toyCentre(),
+      }[over]();
+      drag = {
+        kind: over,
+        id: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startX0: start.x,
+        startY0: start.y,
+        moved: false,
+        samples: [{ x: event.clientX, y: event.clientY, t: event.timeStamp }],
+      };
       canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener('pointerup', (event) => endPointer(event, false));
@@ -171,9 +216,11 @@
       manifest,
       assetBase: '../../assets/',
       mediaHost: document.getElementById('media'),
+      snowCanvas: document.getElementById('snow'),
       view: () => (behaviour ? behaviour.view() : { cx: layout.width / 2, dir: 1, scale: layout.scale }),
       sizeFor: (clip, pose, index) => window.LuluLogic.displaySize(clip, pose, index, config),
     });
+    player.snowDensity = config.snowFlakesPer100Px;
     await player.load();
 
     const alpha = player.checkAlpha(config.alphaThreshold);
@@ -194,6 +241,7 @@
       config,
       api,
       extents: player.bodyExtents(config.alphaThreshold),
+      sleepExtents: player.poseExtents('sleep', config.alphaThreshold),
       prefs,
       tune,
       prepareLayout,
@@ -208,7 +256,9 @@
 
     prepareLayout(layout);
     behaviour.applyLayout(layout, { xFraction: settings.xFraction });
-    behaviour.setPrefs(prefs); // draws her bowl and shadow
+    behaviour.setPrefs(prefs); // draws her bowl, bed, ball and shadow, and the snow
+    // Snow follows the calendar (setting 'auto'): check now and then.
+    setInterval(() => behaviour.syncSnow(), config.snowCheckMs);
     // Walk in from the side at start-up, rather than popping into view.
     if (prefs.walkIn && !tune) behaviour.walkInTo(behaviour.cx);
 

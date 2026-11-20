@@ -8,16 +8,20 @@
 
   const L = root.LuluLogic;
   const RM = root.LuluRootMotion;
-  const WALK_CLIPS = Object.freeze({ start: 'walk_start', loop: 'walk_loop', stop: 'walk_stop' });
+  // A gait is a start, a repeating loop and a stop, with root motion for each.
+  const GAITS = Object.freeze({
+    walk: Object.freeze({ start: 'walk_start', loop: 'walk_loop', stop: 'walk_stop' }),
+    run: Object.freeze({ start: 'run_start', loop: 'run_loop', stop: 'run_stop' }),
+  });
   const Interrupt = root.LuluInterrupt;
 
-  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat']);
-  const TRICKS = Object.freeze(['head_tilt', 'play', 'roll_over', 'paw', 'beg', 'spin']);
+  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat', 'trick', 'throw']);
+  const TRICKS = Object.freeze(['head_tilt', 'play', 'roll_over', 'paw', 'beg', 'spin', 'yawn', 'scratch', 'dig']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
     constructor({
-      player, manifest, config, api, extents, prefs, tune, prepareLayout,
+      player, manifest, config, api, extents, prefs, tune, prepareLayout, sleepExtents = null,
       rng = Math.random, clock = () => new Date(),
     }) {
       this.player = player;
@@ -25,6 +29,7 @@
       this.config = config;
       this.api = api;
       this.clipExtents = extents; // clip pixels, facing right
+      this.sleepExtents = sleepExtents || extents; // her lying pose, clip pixels, facing right
       this.tune = tune;
       this.prepareLayout = prepareLayout; // resizes the canvas for a new layout
       this.rng = rng;
@@ -53,6 +58,12 @@
       this.follow = null; // { x, movedAt, lookedAt } while "Follow me" is on
       this.thirst = 0; // clip pixels walked since her last drink
       this.bowlMoves = 0; // counts bowl drags, so a trip to it can notice a move
+      this.bedMoves = 0; // the same for her bed
+      this.toyMoves = 0; // and for her ball
+      this.toyThrown = false; // a throw is in the air: fetch it when it stops
+      this.fetchToy = false; // it has stopped: go and get it at the next chance
+      this.deepSleep = false;
+      this.player.onToyRest = (x) => this.toyRested(x);
 
       this.onNotify = null;
       this.cancelWait = null;
@@ -79,14 +90,35 @@
       this.cx = L.clamp(this.cx, r.min, r.max);
     }
 
-    // How far each walk clip carries her, in window pixels.
-    distances() {
+    // Root motion (clip pixels per frame) for a gait. The run's is eased off
+    // at gallop speed (see config.runSpeedShare).
+    motion(gait) {
+      if (gait !== 'run') return RM;
+      if (!this.runMotion) {
+        const { runFullSpeedBelow: v0, runSpeedShare: c } = this.config;
+        const ease = (v) => (v <= v0 ? v : v0 + (v - v0) * c);
+        this.runMotion = {
+          start: RM.run.start.map(ease),
+          loop: RM.run.loop.map(ease),
+          stop: RM.run.stop.map(ease),
+        };
+      }
+      return this.runMotion;
+    }
+
+    // How far each clip of a gait carries her, in window pixels.
+    distances(gait = 'walk') {
       const s = this.layout.scale;
+      const m = this.motion(gait);
       return {
-        start: L.clipDistance(RM.start) * s,
-        loop: L.clipDistance(RM.loop) * s,
-        stop: L.clipDistance(RM.stop) * s,
+        start: L.clipDistance(m.start) * s,
+        loop: L.clipDistance(m.loop) * s,
+        stop: L.clipDistance(m.stop) * s,
       };
+    }
+
+    canRun() {
+      return Object.values(GAITS.run).every((clip) => this.hasClip(clip));
     }
 
     aheadIsWall(dir = this.dir) {
@@ -107,7 +139,30 @@
       this.prefs = prefs;
       this.pace = this.clampPace(prefs.walkPace);
       this.player.setShadows(prefs.shadow);
+      this.syncProps();
+      this.syncSnow();
+    }
+
+    // Bowl, bed and ball, after a layout or preference change. moved: she is
+    // on a different screen (or it changed size), so the ball goes back to
+    // its saved spot.
+    syncProps({ moved = false } = {}) {
       this.syncBowl();
+      this.syncBed();
+      this.syncToy(moved);
+    }
+
+    // Snow in December (setting 'auto'), always ('on') or never ('off').
+    syncSnow() {
+      const mode = this.prefs.snow;
+      const on = mode === 'on' || (mode === 'auto' && this.config.snowMonths.includes(this.clock().getMonth()));
+      this.player.setSnow(on);
+    }
+
+    // The ambient animation (rolling ball, snow) rests while she is hidden or
+    // in a deep sleep, so it costs nothing while nobody is watching.
+    syncAmbient() {
+      this.player.setAmbientPaused(!this.running || this.deepSleep);
     }
 
     // ------------------------------------------------------------ water bowl
@@ -133,13 +188,18 @@
     }
 
     bowlRoute() {
-      const sc = this.layout.scale;
+      return this.routeTo(this.bowlX(), this.config.treatNoseReach * this.layout.scale);
+    }
+
+    // Walks (one or two, strides stretched a little) that end with her centre
+    // exactly `reach` short of window x, facing it.
+    routeTo(x, reach) {
       const D = this.distances();
       const [fMin, fMax] = this.config.strideRange;
       return L.bowlRoute({
         from: this.cx,
-        bowl: this.bowlX(),
-        reach: this.config.treatNoseReach * sc,
+        bowl: x,
+        reach,
         start: D.start,
         loop: D.loop,
         stop: D.stop,
@@ -147,6 +207,163 @@
         fMin,
         fMax,
       });
+    }
+
+    // Walk to window x, ending `reach` short of it and facing it. Returns
+    // true once she is there, false if there is no route, something else came
+    // up on the way, or it was moved (moves() changed) or put away (still()
+    // false) meanwhile; a moved target is planned again once.
+    async walkUpTo(getX, reach, moves, still) {
+      const tol = 3 * this.layout.scale;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const before = moves();
+        const x = getX();
+        if (Math.abs(this.cx - (x - this.dir * reach)) <= tol) return true;
+        if (Math.abs(this.cx - (x + this.dir * reach)) <= tol) {
+          await this.turnTo(-this.dir);
+          return true;
+        }
+        const route = this.routeTo(x, reach);
+        if (!route) return false;
+        let replan = false;
+        for (const leg of route) {
+          if (Math.abs(leg.stop - this.cx) > 1) await this.doWalk({ target: leg.stop, strideScale: leg.f });
+          if (this.pending || !still() || Math.abs(leg.stop - this.cx) > 1) return false;
+          if (moves() !== before) {
+            replan = true;
+            break;
+          }
+        }
+        if (!replan) return Math.abs(this.cx - (getX() - this.dir * reach)) <= tol;
+      }
+      return false;
+    }
+
+    // ------------------------------------------------------------ dog bed
+
+    // Half the bed's width, clip pixels: her lying body plus some padding.
+    bedHalfWidth() {
+      const e = this.sleepExtents;
+      return ((e.back + e.front) / 2) * this.config.lyingSize + this.config.bedPadPx;
+    }
+
+    // Lying down, the middle of her body is this far ahead of her centre
+    // point (window pixels), so this is how far short of the bed she stops.
+    bedReach() {
+      const e = this.sleepExtents;
+      return ((e.front - e.back) / 2) * this.config.lyingSize * this.layout.scale;
+    }
+
+    bedX() {
+      const w = this.layout.width;
+      const edge = (this.bedHalfWidth() + this.config.bedEdgePx) * this.layout.scale;
+      if (edge * 2 > w) return w / 2;
+      return L.clamp(this.prefs.bedX * w, edge, w - edge);
+    }
+
+    syncBed() {
+      if (!this.layout) return;
+      this.player.setBed(this.prefs.dogBed ? { x: this.bedX(), halfWidth: this.bedHalfWidth() } : null);
+    }
+
+    // The bed is being dragged to window x.
+    moveBed(x) {
+      const w = this.layout.width;
+      this.prefs = { ...this.prefs, bedX: L.clamp(x / w, 0, 1) };
+      this.bedMoves += 1;
+      this.syncBed();
+      return this.bedX() / w;
+    }
+
+    // Walk to the bed so that lying down puts her exactly in it.
+    goToBed() {
+      return this.walkUpTo(() => this.bedX(), this.bedReach(), () => this.bedMoves, () => this.prefs.dogBed);
+    }
+
+    // ------------------------------------------------------------ her ball
+
+    syncToy(moved) {
+      if (!this.layout) return;
+      if (!this.prefs.toy) {
+        this.player.setToy(null);
+        return;
+      }
+      if (this.player.toy && !moved) return;
+      const edge = 30 * this.layout.scale;
+      const w = this.layout.width;
+      this.player.setToy({ x: L.clamp(this.prefs.toyX * w, edge, w - edge) });
+    }
+
+    // Dragging the ball (window coordinates).
+    holdToy(x, y) {
+      this.toyMoves += 1;
+      this.player.holdToy(x, y);
+    }
+
+    // Let go of the ball with this velocity (window px/s, vy up). A real
+    // throw sends her after it once it stops; a gentle drop does not.
+    releaseToy(vx, vy) {
+      this.toyMoves += 1;
+      this.toyThrown = Math.hypot(vx, vy) > 150 * this.layout.scale;
+      this.player.launchToy(vx, vy);
+    }
+
+    // The ball was clicked: it squeaks and she comes to play.
+    pokeToy() {
+      this.player.squeakToy();
+      if (this.pose !== 'sleep') this.request('toy');
+    }
+
+    // "Throw her ball" from the menu: off towards the side with more room.
+    throwToy() {
+      const t = this.player.toy;
+      if (!t || !this.layout) return;
+      const sc = this.layout.scale;
+      const dir = t.x < this.layout.width / 2 ? 1 : -1;
+      this.toyMoves += 1;
+      this.toyThrown = true;
+      this.player.launchToy(dir * L.randRange(this.rng, 450, 800) * sc, L.randRange(this.rng, 250, 450) * sc);
+    }
+
+    toyRested(x) {
+      if (!this.layout) return;
+      this.prefs = { ...this.prefs, toyX: L.clamp(x / this.layout.width, 0, 1) };
+      this.api.savePlace('toyX', this.prefs.toyX);
+      if (!this.toyThrown) return;
+      this.toyThrown = false;
+      if (this.pose === 'sleep' || this.dragging) return; // a sleeping dog lets it lie
+      this.fetchToy = true;
+      this.notify();
+    }
+
+    // Walk up to the ball and play with it (play-bow and nudges, which send
+    // it rolling a little). If she cannot reach it, she just looks at it.
+    async playWithToy() {
+      const t = this.player.toy;
+      if (!t || !t.resting) return;
+      const reach = this.config.toyNoseReach * this.layout.scale;
+      const there = await this.walkUpTo(
+        () => this.player.toy.x, reach, () => this.toyMoves,
+        () => Boolean(this.prefs.toy && this.player.toy && this.player.toy.resting),
+      );
+      if (!there) {
+        if (this.pending || !this.player.toy) return;
+        await this.turnTo(this.player.toy.x >= this.cx ? 1 : -1);
+        this.lastAction = 'look';
+        await this.playClip('look');
+        return;
+      }
+      this.lastAction = 'toy';
+      await this.playClip('play', { onFrame: (f) => this.nudgeToy(f) });
+    }
+
+    nudgeToy(f) {
+      for (const [frame, push] of this.config.toyNudgeFrames) {
+        if (f.prevIndex < frame && f.index >= frame && this.player.toy && this.player.toy.resting) {
+          this.player.squeakToy();
+          this.player.launchToy(this.dir * push * this.layout.scale, 0);
+        }
+      }
     }
 
     // Walk to the bowl (one or two walks, lined up so her nose lands in it)
@@ -188,7 +405,7 @@
 
     // Tune mode: do the next trick in the list (for trying them out).
     nextTrick() {
-      const available = TRICKS.filter((trick) => this.hasClip(trick));
+      const available = [...TRICKS.filter((trick) => this.hasClip(trick)), ...(this.canRun() ? ['zoomies'] : [])];
       if (!available.length) return;
       this.trickIndex = ((this.trickIndex ?? -1) + 1) % available.length;
       this.request(available[this.trickIndex]);
@@ -215,7 +432,7 @@
       if (this.layout && layout.seq <= this.layout.seq) return; // stale
       const prev = this.layout;
       this.layout = layout;
-      this.syncBowl();
+      this.syncProps({ moved: layout.reason !== 'edges' });
       switch (layout.reason) {
         case 'init':
           this.cx = xFraction * layout.width;
@@ -275,6 +492,15 @@
         if (name === 'come') this.request('come', { x: args.x });
         else if (this.config.begForTreats && this.hasClip('beg')) this.request('beg_treat', { x: args.x });
         else this.dropTreat(args.x);
+        return;
+      }
+      if (name === 'trick') {
+        if (!TRICKS.includes(args.trick) && args.trick !== 'zoomies') throw new Error(`Unknown trick: ${args.trick}`);
+        this.request(args.trick, { asked: true });
+        return;
+      }
+      if (name === 'throw') {
+        this.throwToy();
         return;
       }
       this.request(name);
@@ -424,6 +650,8 @@
       for (const [trick, weight] of Object.entries(this.config.trickWeights)) {
         if (this.hasClip(trick)) base[trick] = weight;
       }
+      if (this.canRun()) base.zoomies = this.config.zoomiesWeight;
+      if (this.prefs.toy) base.toy = this.config.toyWeight;
       return L.applyMood(base, mood);
     }
 
@@ -437,6 +665,7 @@
     setRunning(running) {
       if (running === this.running) return;
       this.running = running;
+      this.syncAmbient();
       if (running) this.openGate();
       else this.interrupt();
     }
@@ -570,6 +799,11 @@
         await this.perform(req.type, req);
         return;
       }
+      if (this.fetchToy) {
+        this.fetchToy = false;
+        await this.playWithToy();
+        return;
+      }
       if (this.treat) {
         await this.eatTreat(); // a bone is still waiting (e.g. after a drag)
         return;
@@ -615,6 +849,17 @@
         case 'drink':
           if (this.prefs.waterBowl) await this.drink();
           return;
+        case 'toy':
+          if (this.prefs.toy) await this.playWithToy();
+          return;
+        case 'zoomies':
+          if (await this.zoomies(Boolean(req.asked))) {
+            this.lastAction = 'zoomies';
+          } else if (req.asked && this.hasClip('play')) {
+            this.lastAction = 'play'; // no room to run: a play-bow instead
+            await this.playClip('play');
+          }
+          return;
         case 'beg_treat':
           // Beg, then the bone drops near where you asked, and she eats it.
           this.lastAction = 'beg';
@@ -650,6 +895,10 @@
       const [lo, hi] = this.config.napSeconds;
       const napScale = this.tune ? 1 : this.mood().nap;
       this.napEnds = Date.now() + L.randRange(this.rng, lo, hi) * napScale * 1000;
+      // Off to bed first, if she has one; if something comes up on the way,
+      // that comes first (an idle nap is tried again afterwards).
+      if (this.prefs.dogBed && !(await this.goToBed()) && this.pending) return;
+      if (this.hasClip('yawn') && this.rng() < this.config.yawnBeforeNap) await this.playClip('yawn');
       // Circle before lying down (not straight after turning round: two
       // rotations in a row look odd).
       if (this.hasClip('spin') && this.lastPlayed !== 'turn' && this.rng() < this.config.spinBeforeNap) {
@@ -681,7 +930,14 @@
       }
       if (this.idleSleep && Date.now() - this.idleSince >= this.config.deepSleepAfterMs) {
         this.player.showPose('sleep'); // still pose: no decoding while nobody is watching
-        await this.wait(Infinity);
+        this.deepSleep = true;
+        this.syncAmbient();
+        try {
+          await this.wait(Infinity);
+        } finally {
+          this.deepSleep = false;
+          this.syncAmbient();
+        }
         return;
       }
       await this.breathe();
@@ -725,11 +981,43 @@
       }
     }
 
+    // A dash at full gallop. Heads for another screen when there is one (and
+    // sometimes even when there is room here), otherwise needs room on this
+    // screen for the whole run. Returns false if there is nowhere to run.
+    // asked: from the menu. If there is no room from where she is, she trots
+    // to a spot near one end first, then dashes across.
+    async zoomies(asked = false) {
+      if (!this.canRun()) return false;
+      if (await this.doWalk({ gait: 'run' })) return true;
+      if (!asked) return false;
+      const spot = this.runUpSpot();
+      if (spot === null) return false;
+      // Walks normally stop on a whole step; this lands exactly on the spot.
+      const there = await this.walkUpTo(() => spot, 0, () => 0, () => true);
+      if (!there || this.pending) return false;
+      return this.doWalk({ gait: 'run' });
+    }
+
+    // The nearest spot from which a whole run (start and stop) fits on this
+    // screen, or null if the screen is too small for one.
+    runUpSpot() {
+      const D = this.distances('run');
+      const need = D.start + D.stop + 2;
+      const r = this.range();
+      if (r.max - r.min < need) return null;
+      const runRight = Math.min(this.cx, r.max - need);
+      const runLeft = Math.max(this.cx, r.min + need);
+      return Math.abs(runRight - this.cx) <= Math.abs(runLeft - this.cx) ? runRight : runLeft;
+    }
+
     // toward: 'left' | 'right' walks off that side to the next screen.
     // strideScale stretches or shortens her steps a little for this walk only
     // (used to land exactly at her bowl).
-    async doWalk({ target = null, follow = false, toward = null, strideScale = 1 } = {}) {
-      const D = this.distances();
+    async doWalk({ target = null, follow = false, toward = null, strideScale = 1, gait = 'walk' } = {}) {
+      const D = this.distances(gait);
+      const clips = GAITS[gait];
+      const rate = gait === 'walk' ? this.pace : 1;
+      const run = gait === 'run';
       const edges = this.layout.edges;
       const exits = ['left', 'right'].filter((side) => edges[side]);
       let trip = false;
@@ -740,7 +1028,7 @@
         trip = true;
         dir = toward === 'right' ? 1 : -1;
       } else {
-        if (exits.length > 0 && !this.tune && this.rng() < this.prefs.tripChance) {
+        if (exits.length > 0 && !this.tune && this.rng() < (run ? 0.6 : this.prefs.tripChance)) {
           trip = true;
           dir = exits[Math.floor(this.rng() * exits.length)] === 'right' ? 1 : -1;
         } else {
@@ -748,7 +1036,7 @@
         }
         const fits = (d) => L.canStartWalk({
           cx: this.cx, dir: d, range: this.range(), aheadIsWall: this.aheadIsWall(d),
-          startDist: D.start, loopDist: D.loop, stopDist: D.stop,
+          startDist: D.start, loopDist: run ? 0 : D.loop, stopDist: D.stop,
         });
         if (!fits(dir)) {
           dir = -dir;
@@ -759,33 +1047,36 @@
       await this.turnTo(dir); // turn only while standing
 
       const w = {
+        gait,
         trip,
         target,
         follow,
         strideScale,
-        cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...this.config.walkLoops),
+        cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...(run ? this.config.runLoops : this.config.walkLoops)),
         hitWall: false,
         ending: false,
         loopIndex: -1,
       };
       this.walk = w;
       try {
-        await this.playClip('walk_start', { rate: this.pace, onFrame: (f) => this.walkFrame('start', f) });
+        await this.playClip(clips.start, { rate, onFrame: (f) => this.walkFrame('start', f) });
         if (!this.stopRightAfterStart()) {
-          const looping = this.playClip('walk_loop', {
-            loop: true, rate: this.pace, onFrame: (f) => this.walkFrame('loop', f),
+          const looping = this.playClip(clips.loop, {
+            loop: true, rate, onFrame: (f) => this.walkFrame('loop', f),
           });
           this.onNotify = () => this.reconsiderWalk(null);
           this.reconsiderWalk(-1);
           await looping;
           this.onNotify = null;
         }
-        await this.playClip('walk_stop', { rate: this.pace, onFrame: (f) => this.walkFrame('stop', f) });
+        await this.playClip(clips.stop, { rate, onFrame: (f) => this.walkFrame('stop', f) });
       } finally {
         this.walk = null;
         this.onNotify = null;
       }
-      if (w.hitWall) await this.turnTo(-this.dir); // reached the edge: turn around
+      // Reached the edge: turn around (not when she was walking to a spot,
+      // where the way she faces on arrival matters).
+      if (w.hitWall && target === null) await this.turnTo(-this.dir);
       this.savePosition();
       return true;
     }
@@ -817,8 +1108,9 @@
     // Move her by exactly the distance the animation covered since the last
     // frame, so her feet stay planted.
     walkFrame(phase, f) {
-      const dx = RM[phase];
-      if (dx.length !== f.frames) throw new Error(`Root motion for ${WALK_CLIPS[phase]} has ${dx.length} entries, clip has ${f.frames} frames`);
+      const gait = this.walk ? this.walk.gait : 'walk';
+      const dx = this.motion(gait)[phase];
+      if (dx.length !== f.frames) throw new Error(`Root motion for ${GAITS[gait][phase]} has ${dx.length} entries, clip has ${f.frames} frames`);
       const stride = this.walk ? this.walk.strideScale : 1;
       const d = L.stepDistance(dx, f.prevIndex, f.index, f.wrapped) * stride;
       this.cx += this.dir * d * this.layout.scale;
@@ -835,7 +1127,7 @@
     // At the end of walk_start: stop straight away only if asked to (or if
     // a wall leaves no room for a full cycle).
     stopRightAfterStart() {
-      const D = this.distances();
+      const D = this.distances(this.walk.gait);
       const k = this.walk.strideScale;
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
@@ -851,14 +1143,14 @@
     reconsiderWalk(index) {
       const w = this.walk;
       if (!w || w.ending) return;
-      const D = this.distances();
+      const D = this.distances(w.gait);
       const k = w.strideScale;
-      const remaining = L.remainingDistance(RM.loop, index === null ? w.loopIndex : index) * this.layout.scale * k;
+      const remaining = L.remainingDistance(this.motion(w.gait).loop, index === null ? w.loopIndex : index) * this.layout.scale * k;
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
         remaining, loopDist: D.loop * k, stopDist: D.stop * k,
         cyclesLeft: w.trip ? Infinity : w.cyclesLeft,
-        wantStop: this.pending !== null,
+        wantStop: this.pending !== null || (this.fetchToy && w.target === null),
         target: w.target,
       });
       if (r.end) {
@@ -882,7 +1174,7 @@
           if (layout && (!this.layout || layout.seq > this.layout.seq)) {
             this.prepareLayout(layout);
             this.layout = layout;
-            this.syncBowl();
+            this.syncProps({ moved: true });
             this.cx = L.entryPosition({ dir: this.dir, width: layout.width, extents: this.extents() });
             if (this.walk === w) {
               w.trip = false;

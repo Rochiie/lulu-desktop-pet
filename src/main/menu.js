@@ -4,6 +4,25 @@
 
 const { SIZE_OPTIONS } = require('./settings');
 
+// Tricks she can be asked for, in menu order, and the clips each one needs.
+const TRICKS = Object.freeze([
+  Object.freeze({ name: 'paw', label: 'Give paw', clips: ['paw'] }),
+  Object.freeze({ name: 'beg', label: 'Beg', clips: ['beg'] }),
+  Object.freeze({ name: 'roll_over', label: 'Roll over', clips: ['roll_over'] }),
+  Object.freeze({ name: 'head_tilt', label: 'Head tilt', clips: ['head_tilt'] }),
+  Object.freeze({ name: 'play', label: 'Play bow', clips: ['play'] }),
+  Object.freeze({ name: 'spin', label: 'Spin', clips: ['spin'] }),
+  Object.freeze({ name: 'yawn', label: 'Yawn', clips: ['yawn'] }),
+  Object.freeze({ name: 'scratch', label: 'Scratch', clips: ['scratch'] }),
+  Object.freeze({ name: 'dig', label: 'Dig', clips: ['dig'] }),
+  Object.freeze({ name: 'zoomies', label: 'Zoomies!', clips: ['run_start', 'run_loop', 'run_stop'] }),
+]);
+
+// The tricks whose clips are all installed.
+function availableTricks(clips) {
+  return TRICKS.filter((t) => t.clips.every((c) => Boolean(clips[c])));
+}
+
 function buildMenuTemplate(s, a) {
   const template = [
     {
@@ -14,6 +33,11 @@ function buildMenuTemplate(s, a) {
     },
     { label: 'Follow me', type: 'checkbox', checked: s.following, click: () => a.toggleFollow() },
     { label: 'Give a treat', click: () => a.giveTreat() },
+    ...(s.toy ? [{ label: 'Throw her ball', click: () => a.throwToy() }] : []),
+    ...(s.tricks.length ? [{
+      label: 'Tricks',
+      submenu: s.tricks.map((t) => ({ label: t.label, click: () => a.trick(t.name) })),
+    }] : []),
     { type: 'separator' },
     { label: 'Walk', click: () => a.command('walk') },
     { label: 'Sit', click: () => a.command('sit') },
@@ -94,4 +118,4 @@ function updateItem(s, a) {
   }
 }
 
-module.exports = { buildMenuTemplate };
+module.exports = { buildMenuTemplate, availableTricks, TRICKS };

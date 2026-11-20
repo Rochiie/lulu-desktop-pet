@@ -6,7 +6,7 @@
   const api = window.luluSettings;
   const $ = (id) => document.getElementById(id);
   const SLIDERS = ['lookMultiplier', 'moodStrength', 'walkPace', 'tripChance', 'followSeconds'];
-  const SWITCHES = ['noticeMouse', 'walkBetweenScreens', 'walkIn', 'avoidFullscreen', 'waterBowl', 'shadow', 'startWithWindows'];
+  const SWITCHES = ['noticeMouse', 'walkBetweenScreens', 'walkIn', 'avoidFullscreen', 'waterBowl', 'dogBed', 'toy', 'shadow', 'startWithWindows'];
   const SEND_DELAY_MS = 120;
 
   let view = null;
@@ -34,6 +34,9 @@
     $('version').textContent = `Version ${meta.version}`;
     for (const radio of document.querySelectorAll('input[name="size"]')) {
       radio.checked = Number(radio.value) === values.size;
+    }
+    for (const radio of document.querySelectorAll('input[name="snow"]')) {
+      radio.checked = radio.value === values.snow;
     }
     for (const key of SLIDERS) {
       if (key in pending) continue; // don't fight the slider while it is moving
@@ -74,6 +77,9 @@
   function wire() {
     for (const radio of document.querySelectorAll('input[name="size"]')) {
       radio.addEventListener('change', () => queue({ size: Number(radio.value) }));
+    }
+    for (const radio of document.querySelectorAll('input[name="snow"]')) {
+      radio.addEventListener('change', () => queue({ snow: radio.value }));
     }
     for (const key of SLIDERS) {
       $(key).addEventListener('input', () => {

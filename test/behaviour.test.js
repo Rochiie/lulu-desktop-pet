@@ -25,6 +25,7 @@ const L = globalThis.LuluLogic;
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
 const EXTENTS = { back: 200, front: 150 }; // clip pixels
+const SLEEP_EXTENTS = { back: 190, front: 110 }; // her lying pose, clip pixels
 
 class FakePlayer {
   constructor() {
@@ -64,6 +65,47 @@ class FakePlayer {
 
   setBowl(bowl) {
     this.bowl = bowl ? { x: bowl.x, drinking: false } : null;
+  }
+
+  setBed(bed) {
+    this.bed = bed ? { ...bed } : null;
+  }
+
+  // The ball: launched balls roll to a stop (0.3 s worth of travel) on the
+  // next tick, so tests run fast.
+  setToy(toy) {
+    this.toy = toy ? { x: toy.x, h: 0, resting: true } : null;
+  }
+
+  holdToy(x) {
+    if (!this.toy) return;
+    this.toy.x = x;
+    this.toy.resting = false;
+  }
+
+  launchToy(vx) {
+    const t = this.toy;
+    if (!t) return;
+    (this.launches = this.launches || []).push(vx);
+    t.resting = false;
+    setImmediate(() => {
+      if (this.toy !== t) return;
+      t.x = Math.max(11, Math.min(this.width - 11, t.x + vx * 0.3));
+      t.resting = true;
+      if (this.onToyRest) this.onToyRest(t.x);
+    });
+  }
+
+  squeakToy() {
+    this.squeaks = (this.squeaks || 0) + 1;
+  }
+
+  setSnow(on) {
+    this.snowing = on;
+  }
+
+  setAmbientPaused(paused) {
+    this.ambientPaused = paused;
   }
 
   setBowlDrinking(drinking) {
@@ -178,6 +220,7 @@ const PREFS = {
   walkPace: 1, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
   followSeconds: 60, noticeMouse: true, walkIn: true,
   waterBowl: false, bowlX: 0.85, shadow: true,
+  dogBed: false, bedX: 0.12, toy: false, toyX: 0.6, snow: 'off',
 };
 
 function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null, clock = NOON, prefs = {} } = {}) {
@@ -187,6 +230,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
   const api = {
     reportError: (msg) => errors.push(msg),
     savePosition: (f) => positions.push({ f, cx: behaviour.cx, dir: behaviour.dir, width: behaviour.layout.width }),
+    savePlace: (key, x) => (api.places = api.places || []).push({ key, x }),
     cross: cross || (async () => null),
   };
   const behaviour = new globalThis.LuluBehaviour({
@@ -204,15 +248,20 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
       pawShare: 0,
       spinBeforeNap: 0,
       begForTreats: false,
+      yawnBeforeNap: 0,
+      zoomiesWeight: 0,
+      toyWeight: 0,
       ...config,
     },
     api,
     extents: EXTENTS,
+    sleepExtents: SLEEP_EXTENTS,
     prefs: { ...PREFS, ...prefs },
     tune: false,
     prepareLayout: () => {},
     clock,
   });
+  player.width = layout.width;
   behaviour.applyLayout(layout, { xFraction });
   behaviour.setPrefs(behaviour.prefs);
   behaviour.start();
@@ -567,6 +616,20 @@ test('noticing can be switched off', async () => {
   t.behaviour.notice();
   t.stop();
   assert.equal(t.behaviour.pending, null);
+  assert.equal(t.behaviour.fetchToy, false);
+});
+
+test('a thrown ball is fetched even if something else was asked for first', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2560), prefs: { toy: true, toyX: 0.3 } });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.holdToy(900, 100);
+  t.behaviour.request('look');
+  t.behaviour.releaseToy(1500, 200);
+  await until(() => t.player.history.slice(before).includes('play'), 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.match(t.player.history.slice(before).join(' '), /look .*play/);
 });
 
 test('a treat on another screen: she walks in from the side to eat it', async () => {
@@ -703,4 +766,181 @@ test('no spin before a nap straight after turning round', async () => {
   t.stop();
   const h = t.player.history;
   assert.notEqual(h[h.lastIndexOf('lie_down') - 1], 'spin');
+});
+
+// ------------------------------------------------------------ 1.7.0
+
+// Run distances as she uses them (gallop speed eased off, see config).
+const runTotal = (part, behaviour) => L.clipDistance(behaviour.motion('run')[part]);
+
+// Where she is as each clip starts: [{ name, cx, dir }].
+function trackClips(t) {
+  const seen = [];
+  t.player.listeners.push((name) => seen.push({ name, cx: t.behaviour.cx, dir: t.behaviour.dir }));
+  return seen;
+}
+
+test('zoomies: a full gallop that moves her exactly by the run root motion', async () => {
+  const t = setup({ config: { weights: { sit: 1 }, runLoops: [3, 3] }, layout: makeLayout(1, 6000), xFraction: 0.1 });
+  await until(() => t.player.history.length >= 1);
+  const seen = trackClips(t);
+  t.behaviour.command('trick', { trick: 'zoomies' });
+  const after = () => seen.findIndex((c) => c.name === 'run_stop');
+  await until(() => after() >= 0 && seen.length > after() + 1, 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const names = seen.map((c) => c.name).join(' ');
+  assert.match(names, /run_start run_loop run_stop/);
+  assert.deepEqual(t.player.rates.slice(t.player.history.indexOf('run_start'), t.player.history.indexOf('run_start') + 3), [1, 1, 1], 'runs play at their own speed, not the walk pace');
+  const from = seen.find((c) => c.name === 'run_start');
+  const to = seen[after() + 1];
+  const b = t.behaviour;
+  const expected = runTotal('start', b) + 3 * runTotal('loop', b) + runTotal('stop', b);
+  assert.ok(Math.abs((to.cx - from.cx) * from.dir - expected) < 0.01, `moved ${(to.cx - from.cx).toFixed(2)}, expected ${expected}`);
+  // Slow parts keep her paws planted exactly; only gallop speed is eased off.
+  const raw = globalThis.LuluRootMotion.run;
+  const v0 = globalThis.LuluConfig.runFullSpeedBelow;
+  raw.start.forEach((v, i) => { if (v <= v0) assert.equal(b.motion('run').start[i], v); });
+  assert.ok(b.motion('run').loop[0] < raw.loop[0]);
+});
+
+test('zoomies from the middle of a screen: she trots to one end, then dashes across', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2560), xFraction: 0.5 });
+  await until(() => t.player.history.length >= 1);
+  const seen = trackClips(t);
+  t.behaviour.command('trick', { trick: 'zoomies' });
+  await until(() => seen.some((c) => c.name === 'run_stop'), 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.match(seen.map((c) => c.name).join(' '), /walk_start .*run_start/);
+});
+
+test('zoomies need room: on a small screen with no neighbours she play-bows instead', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 1500) });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.command('trick', { trick: 'zoomies' });
+  await until(() => t.player.history.slice(before).includes('play'), 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.equal(t.player.history.includes('run_start'), false);
+});
+
+test('zoomies run onto the next screen when there is one', async () => {
+  let crossed = 0;
+  const t = setup({
+    config: { weights: { sit: 1 }, runLoops: [2, 2] },
+    layout: makeLayout(1, 1500, { left: false, right: true }),
+    xFraction: 0.5,
+    cross: async () => {
+      crossed += 1;
+      return makeLayout(2, 2560, { left: true, right: false }, 'cross');
+    },
+  });
+  await until(() => t.player.history.length >= 1);
+  const seen = trackClips(t);
+  t.behaviour.command('trick', { trick: 'zoomies' });
+  const stopAt = () => seen.findIndex((c) => c.name === 'run_stop');
+  await until(() => stopAt() >= 0 && seen.length > stopAt() + 1, 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.equal(crossed, 1);
+  // She ran off the right of the first screen and stopped on the second.
+  const end = seen[stopAt() + 1];
+  const range = L.walkRange(2560, EXTENTS, globalThis.LuluConfig.edgeMarginPx);
+  assert.ok(end.cx >= range.min && end.cx <= range.max, `ended at ${end.cx}`);
+});
+
+test('any trick can be asked for from the menu; unknown ones are refused', async () => {
+  const t = setup({ config: { weights: { sit: 1 } } });
+  await until(() => t.player.history.length >= 1);
+  for (const trick of ['dig', 'yawn', 'scratch', 'paw']) {
+    t.behaviour.command('trick', { trick });
+    await t.player.next(trick);
+  }
+  assert.throws(() => t.behaviour.command('trick', { trick: 'fly' }), /Unknown trick/);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+});
+
+test('the new tricks and zoomies join her random actions', async () => {
+  const t = setup({
+    config: { weights: { look: 1 }, trickWeights: { yawn: 1, scratch: 1, dig: 1 }, zoomiesWeight: 1 },
+    layout: makeLayout(1, 6000),
+  });
+  await until(() => ['yawn', 'scratch', 'dig', 'run_start'].every((c) => t.player.history.includes(c)), 15000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+});
+
+test('the dog bed: she walks over and lies down exactly in it', async () => {
+  const lying = globalThis.LuluConfig.lyingSize;
+  const middle = ((SLEEP_EXTENTS.front - SLEEP_EXTENTS.back) / 2) * lying; // body middle ahead of her centre
+  for (const [x0, bedX] of [[0.8, 0.12], [0.1, 0.7], [0.5, 0.52]]) {
+    const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2560), xFraction: x0, prefs: { dogBed: true, bedX } });
+    await until(() => t.player.history.length >= 1);
+    const before = t.player.history.length;
+    t.behaviour.command('nap');
+    await until(() => t.player.history.slice(before).includes('lie_down'), 8000);
+    t.stop();
+    assert.deepEqual(t.errors, []);
+    const body = t.behaviour.cx + t.behaviour.dir * middle;
+    assert.ok(Math.abs(body - t.player.bed.x) < 3.5, `start ${x0}: body middle ${body.toFixed(1)}, bed ${t.player.bed.x.toFixed(1)}`);
+  }
+});
+
+test('the bed can be moved, kept on screen and put away', () => {
+  const t = setup({ layout: makeLayout(1, 2000), prefs: { dogBed: true, bedX: 0.5 } });
+  t.stop();
+  assert.equal(t.player.bed.x, 1000);
+  t.behaviour.moveBed(99999);
+  assert.ok(t.player.bed.x + t.player.bed.halfWidth <= 2000, 'kept on screen');
+  t.behaviour.setPrefs({ ...t.behaviour.prefs, dogBed: false });
+  assert.equal(t.player.bed, null);
+});
+
+test('throwing her ball: she fetches up to it and plays, nudging it along', async () => {
+  const reach = globalThis.LuluConfig.toyNoseReach;
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2560), xFraction: 0.2, prefs: { toy: true, toyX: 0.3 } });
+  await until(() => t.player.history.length >= 1);
+  let at = null;
+  t.player.listeners.push((name) => {
+    if (name === 'play' && !at) at = { cx: t.behaviour.cx, dir: t.behaviour.dir, ball: t.player.toy.x };
+  });
+  t.behaviour.holdToy(900, 100);
+  t.behaviour.releaseToy(2000, 300); // flies to about x 1500
+  await until(() => at !== null && t.player.launches.length >= 2, 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.ok(Math.abs(at.cx + at.dir * reach - at.ball) < 3.5, `nose ${(at.cx + at.dir * reach).toFixed(1)}, ball ${at.ball.toFixed(1)}`);
+  // Her nudges push the ball the way she faces, and its resting place is saved.
+  assert.ok(t.player.launches.slice(1).every((v) => Math.sign(v) === at.dir));
+  assert.ok(t.api.places.some((p) => p.key === 'toyX'));
+});
+
+test('a gentle drop of the ball does not send her after it', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, prefs: { toy: true } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.holdToy(700, 100);
+  t.behaviour.releaseToy(20, 0);
+  await new Promise((r) => setTimeout(r, 50));
+  t.stop();
+  assert.equal(t.behaviour.pending, null);
+});
+
+test('snow: on, off, or in December only', () => {
+  const dec = () => new Date(2026, 11, 5, 12);
+  const nov = () => new Date(2026, 10, 20, 12);
+  assert.equal(setup({ prefs: { snow: 'on' }, clock: nov }).player.snowing, true);
+  assert.equal(setup({ prefs: { snow: 'off' }, clock: dec }).player.snowing, false);
+  assert.equal(setup({ prefs: { snow: 'auto' }, clock: dec }).player.snowing, true);
+  assert.equal(setup({ prefs: { snow: 'auto' }, clock: nov }).player.snowing, false);
+});
+
+test('the ambient animation rests while she is hidden', () => {
+  const t = setup();
+  assert.equal(t.player.ambientPaused, false);
+  t.behaviour.setRunning(false);
+  assert.equal(t.player.ambientPaused, true);
+  t.stop();
 });

@@ -128,3 +128,38 @@ test('bowl and shadow settings', () => {
   assert.deepEqual([v.waterBowl, v.shadow, v.bowlX], [false, false, 0.2]);
   assert.equal(sanitize({ bowlX: 3 }).bowlX, DEFAULTS.bowlX);
 });
+
+test('bed, ball and snow settings', () => {
+  const { prefsFor } = require('../src/main/settings');
+  assert.deepEqual([DEFAULTS.dogBed, DEFAULTS.toy, DEFAULTS.snow], [true, true, 'auto']);
+  const v = sanitize({ dogBed: false, toy: false, snow: 'on', bedX: 0.3, toyX: 0.9 });
+  assert.deepEqual([v.dogBed, v.toy, v.snow, v.bedX, v.toyX], [false, false, 'on', 0.3, 0.9]);
+  const bad = sanitize({ dogBed: 'yes', snow: 'blizzard', bedX: -1, toyX: 2 });
+  assert.deepEqual([bad.dogBed, bad.snow, bad.bedX, bad.toyX], [true, 'auto', DEFAULTS.bedX, DEFAULTS.toyX]);
+  const p = prefsFor(v);
+  assert.deepEqual([p.dogBed, p.toy, p.snow, p.bedX, p.toyX], [false, false, 'on', 0.3, 0.9]);
+});
+
+test('the Tricks menu lists only tricks whose clips are installed', () => {
+  const { availableTricks, buildMenuTemplate } = require('../src/main/menu');
+  const real = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
+  const names = availableTricks(real.clips).map((t) => t.name);
+  assert.deepEqual(names, ['paw', 'beg', 'roll_over', 'head_tilt', 'play', 'spin', 'yawn', 'scratch', 'dig', 'zoomies']);
+  const noRun = { ...real.clips };
+  delete noRun.run_loop;
+  assert.equal(availableTricks(noRun).some((t) => t.name === 'zoomies'), false);
+  const asked = [];
+  const s = {
+    following: false, toy: true, tricks: availableTricks(real.clips), size: 0.8, displays: [], fullscreenAvailable: true,
+    avoidFullscreen: true, canStartWithWindows: false, startWithWindows: false, updatesAvailable: false,
+    hiddenByUser: false, version: '1.7.0',
+  };
+  const a = new Proxy({}, { get: (_t, key) => (...args) => asked.push([key, ...args]) });
+  const template = buildMenuTemplate(s, a);
+  const tricks = template.find((i) => i.label === 'Tricks');
+  assert.equal(tricks.submenu.length, 10);
+  tricks.submenu.find((i) => i.label === 'Dig').click();
+  template.find((i) => i.label === 'Throw her ball').click();
+  assert.deepEqual(asked, [['trick', 'dig'], ['throwToy']]);
+  assert.equal(buildMenuTemplate({ ...s, toy: false }, a).some((i) => i.label === 'Throw her ball'), false);
+});

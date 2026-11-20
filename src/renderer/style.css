@@ -11,6 +11,14 @@ canvas {
   display: block;
 }
 
+/* Snow, drawn over her; it never takes the mouse. */
+#snow {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
 body.over-lulu {
   cursor: pointer;
 }

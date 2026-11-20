@@ -167,6 +167,60 @@
       "endPose": "stand",
       "use": "one-shot: play-bow and playful nudging",
       "loop": false
+    },
+    "yawn": {
+      "file": "yawn.webm",
+      "frames": 112,
+      "seconds": 4.667,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: a big sleepy yawn",
+      "loop": false
+    },
+    "scratch": {
+      "file": "scratch.webm",
+      "frames": 117,
+      "seconds": 4.875,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: sits and scratches an ear with a hind leg",
+      "loop": false
+    },
+    "dig": {
+      "file": "dig.webm",
+      "frames": 91,
+      "seconds": 3.792,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: digs at the floor with both front paws",
+      "loop": false
+    },
+    "run_start": {
+      "file": "run_start.webm",
+      "frames": 78,
+      "seconds": 3.25,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: breaks from standing into a gallop (zoomies)",
+      "loop": false
+    },
+    "run_loop": {
+      "file": "run_loop.webm",
+      "frames": 12,
+      "seconds": 0.5,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "loop while galloping",
+      "loop": true
+    },
+    "run_stop": {
+      "file": "run_stop.webm",
+      "frames": 83,
+      "seconds": 3.458,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "one-shot: slows from a gallop to standing",
+      "loop": false
     }
   },
   "notes": "All clips: transparent VP9 WebM (alpha), 24fps, same canvas size and same ground line, Lulu facing right. Flip horizontally for left-facing.",

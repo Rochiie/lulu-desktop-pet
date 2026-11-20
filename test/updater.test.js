@@ -83,6 +83,7 @@ test('menu shows the right update item and the version', () => {
   const base = {
     size: 0.8, startWithWindows: false, canStartWithWindows: true, walkBetweenScreens: true,
     avoidFullscreen: true, fullscreenAvailable: true, hiddenByUser: false, displays: [], version: '1.2.0',
+    tricks: [], toy: false,
   };
   const noop = new Proxy({}, { get: () => () => {} });
   const labels = (s) => buildMenuTemplate({ ...base, ...s }, noop).map((i) => i.label).filter(Boolean);

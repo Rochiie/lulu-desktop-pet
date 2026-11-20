@@ -11,12 +11,12 @@ const {
 } = require('electron');
 
 const log = require('./log');
-const { Settings, prefsFor, DEFAULTS, USER_KEYS } = require('./settings');
+const { Settings, prefsFor, DEFAULTS, USER_KEYS, PLACE_KEYS } = require('./settings');
 const { validateManifest } = require('./manifest');
 const displaysLib = require('./displays');
 const { createPetWindow } = require('./window');
 const { createFullscreenDetector } = require('./fullscreen');
-const { buildMenuTemplate } = require('./menu');
+const { buildMenuTemplate, availableTricks } = require('./menu');
 const { createUpdater } = require('./updater');
 const { openSettingsWindow } = require('./settings-window');
 
@@ -504,6 +504,15 @@ const menuActions = {
   },
   comeHere: () => comeHere('come'),
   giveTreat: () => comeHere('treat'),
+  trick: (name) => {
+    if (!availableTricks(state.manifest.clips).some((t) => t.name === name)) throw new Error(`Unknown trick ${name}`);
+    showByUser();
+    send('lulu:command', { name: 'trick', trick: name });
+  },
+  throwToy: () => {
+    showByUser();
+    send('lulu:command', { name: 'throw' });
+  },
   toggleFollow: () => setFollow(!state.following),
   openSettings,
   setSize,
@@ -538,6 +547,8 @@ function menuState() {
     fullscreenAvailable: state.detector !== null,
     hiddenByUser: state.hiddenByUser,
     following: state.following,
+    toy: s.toy,
+    tricks: availableTricks(state.manifest.clips),
     version: app.getVersion(),
     updatesAvailable: state.updater !== null,
     updateStatus: state.updater ? state.updater.status : null,
@@ -682,9 +693,11 @@ function registerIpc() {
     buildMenu().popup({ window: state.win });
   });
 
-  on('lulu:save-bowl', (bowlX) => {
-    if (!Number.isFinite(bowlX) || bowlX < 0 || bowlX > 1) throw new TypeError('bowlX must be between 0 and 1');
-    state.settings.update({ bowlX });
+  // Where her bowl, bed or ball now sits (share of the screen width).
+  on('lulu:save-place', (key, x) => {
+    if (!PLACE_KEYS.includes(key)) throw new TypeError(`Not a place: ${key}`);
+    if (!Number.isFinite(x) || x < 0 || x > 1) throw new TypeError(`${key} must be between 0 and 1`);
+    state.settings.update({ [key]: x });
   });
 
   on('lulu:save-position', (xFraction) => {

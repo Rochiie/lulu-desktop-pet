@@ -22,7 +22,20 @@ const RANGES = Object.freeze({
   moodStrength: Object.freeze([0, 1]), // 0 = same all day, 1 = full daily rhythm
   followSeconds: Object.freeze([30, 300]), // how long "Follow me" lasts
   bowlX: Object.freeze([0, 1]), // where her water bowl sits, as a share of the screen width
+  bedX: Object.freeze([0, 1]), // where her bed sits
+  toyX: Object.freeze([0, 1]), // where her ball last stopped
 });
+
+// Snow: 'auto' = in December only.
+const SNOW_OPTIONS = Object.freeze(['auto', 'on', 'off']);
+
+// Where things sit on screen, saved by the pet window as they are moved.
+const PLACE_KEYS = Object.freeze(['bowlX', 'bedX', 'toyX']);
+
+const BOOLEAN_KEYS = Object.freeze([
+  'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'noticeMouse', 'walkIn', 'waterBowl',
+  'shadow', 'dogBed', 'toy',
+]);
 
 const DEFAULTS = Object.freeze({
   size: 0.8,
@@ -41,13 +54,18 @@ const DEFAULTS = Object.freeze({
   waterBowl: true,
   bowlX: 0.85,
   shadow: true,
+  dogBed: true,
+  bedX: 0.12,
+  toy: true,
+  toyX: 0.6,
+  snow: 'auto',
 });
 
 // Settings the user can change in the Settings window (and reset).
 const USER_KEYS = Object.freeze([
   'size', 'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'walkPace',
   'tripChance', 'lookMultiplier', 'moodStrength', 'followSeconds', 'noticeMouse', 'walkIn',
-  'waterBowl', 'shadow',
+  'waterBowl', 'shadow', 'dogBed', 'toy', 'snow',
 ]);
 
 const SAVE_DELAY_MS = 500;
@@ -56,9 +74,10 @@ function sanitize(raw) {
   const out = { ...DEFAULTS };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   if (SIZE_OPTIONS.some((o) => o.value === raw.size)) out.size = raw.size;
-  for (const key of ['startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'noticeMouse', 'walkIn', 'waterBowl', 'shadow']) {
+  for (const key of BOOLEAN_KEYS) {
     if (typeof raw[key] === 'boolean') out[key] = raw[key];
   }
+  if (SNOW_OPTIONS.includes(raw.snow)) out.snow = raw.snow;
   for (const [key, [lo, hi]] of Object.entries(RANGES)) {
     if (Number.isFinite(raw[key]) && raw[key] >= lo && raw[key] <= hi) out[key] = raw[key];
   }
@@ -83,6 +102,11 @@ function prefsFor(values) {
     waterBowl: values.waterBowl,
     bowlX: values.bowlX,
     shadow: values.shadow,
+    dogBed: values.dogBed,
+    bedX: values.bedX,
+    toy: values.toy,
+    toyX: values.toyX,
+    snow: values.snow,
   };
 }
 
@@ -139,4 +163,6 @@ class Settings {
   }
 }
 
-module.exports = { Settings, sanitize, prefsFor, DEFAULTS, USER_KEYS, RANGES, SIZE_OPTIONS };
+module.exports = {
+  Settings, sanitize, prefsFor, DEFAULTS, USER_KEYS, RANGES, SIZE_OPTIONS, SNOW_OPTIONS, PLACE_KEYS,
+};

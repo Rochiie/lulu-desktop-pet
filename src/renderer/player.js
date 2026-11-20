@@ -14,6 +14,22 @@
   const BOWL_SCALE = 1.25; // bowl drawing units per clip pixel
   // The next clip needs a few ms to show its first frame; start it this much early.
   const HANDOVER_LEAD_MS = 6;
+  const AMBIENT_FPS = 30; // redraws for the rolling ball and a dropping bone
+  const SNOW_FPS = 20; // the snow has its own layer, redrawn this often
+  const BED_RIM_BACK = 44; // bed rim heights in clip pixels above her ground line
+  const BED_RIM_FRONT = 18; // (both rims rise a little more at the ends)
+  const TOY_R = 11; // ball radius, clip pixels
+  // Ball physics in clip pixels and seconds (scaled with her size).
+  const TOY = Object.freeze({
+    gravity: 1500, bounce: 0.45, wallBounce: 0.5, rollDecel: 650, restSpeed: 6, maxSpeed: 1500,
+  });
+  const SNOW = Object.freeze({
+    column: 6, // window pixels per snow-depth column
+    maxDepth: 7, // clip pixels
+    perFlake: 0.6, // clip pixels of depth a landing flake adds to its column
+    meltPerSec: 0.6, // clip pixels per second once the snow stops
+    fadeInPx: 40, // flakes fade in over the top of the window
+  });
 
   // 0..1 -> 0..1 with a couple of small bounces at the end.
   function easeOutBounce(t) {
@@ -85,6 +101,82 @@
     ctx.fill();
   }
 
+  // A bolster dog bed seen from the side, base centred on (0, 0), hw clip
+  // pixels each side. Its rim is low in the middle and curls up into round
+  // bolsters at both ends. part 'back' (the far rim and the cushion) is drawn
+  // behind her, 'front' (the near rim) in front, so she lies inside it.
+  function traceBedRim(ctx, hw, mid, ends, r) {
+    const top = (x) => -(mid + (ends - mid) * Math.pow(Math.abs(x) / hw, 5));
+    ctx.beginPath();
+    ctx.moveTo(-hw, -2);
+    ctx.lineTo(-hw, top(-hw) + r);
+    ctx.quadraticCurveTo(-hw, top(-hw), -hw + r, top(-hw + r));
+    for (let x = -hw + r; x <= hw - r; x += 4) ctx.lineTo(x, top(x));
+    ctx.lineTo(hw - r, top(hw - r));
+    ctx.quadraticCurveTo(hw, top(hw), hw, top(hw) + r);
+    ctx.lineTo(hw, -2);
+    ctx.quadraticCurveTo(hw, 0, hw - 3, 0);
+    ctx.lineTo(-hw + 3, 0);
+    ctx.quadraticCurveTo(-hw, 0, -hw, -2);
+    ctx.closePath();
+    return top;
+  }
+
+  function drawBed(ctx, hw, part) {
+    if (part === 'back') {
+      traceBedRim(ctx, hw - 6, BED_RIM_BACK, BED_RIM_BACK + 12, 16);
+      const back = ctx.createLinearGradient(0, -BED_RIM_BACK - 12, 0, 0);
+      back.addColorStop(0, '#8e5f45');
+      back.addColorStop(1, '#5f3c2b');
+      ctx.fillStyle = back;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(0, -BED_RIM_FRONT + 3, hw - 22, 8, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#efe3cf';
+      ctx.fill();
+      return;
+    }
+    const top = traceBedRim(ctx, hw, BED_RIM_FRONT, BED_RIM_FRONT + 9, 10);
+    const front = ctx.createLinearGradient(0, -BED_RIM_FRONT - 9, 0, 0);
+    front.addColorStop(0, '#d29874');
+    front.addColorStop(0.35, '#b27654');
+    front.addColorStop(1, '#7f5139');
+    ctx.fillStyle = front;
+    ctx.fill();
+    // Cream piping along the top of the rim.
+    ctx.beginPath();
+    for (let x = -hw + 14; x <= hw - 14; x += 4) {
+      if (x === -hw + 14) ctx.moveTo(x, top(x) + 3);
+      else ctx.lineTo(x, top(x) + 3);
+    }
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#f1e2c8';
+    ctx.stroke();
+  }
+
+  // Her squeaky ball, centred on (0, 0), radius TOY_R; angle rolls the stripe.
+  function drawToy(ctx, angle) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, TOY_R, 0, Math.PI * 2);
+    const g = ctx.createRadialGradient(-3.5, -4, 1, 0, 0, TOY_R);
+    g.addColorStop(0, '#ff8a7a');
+    g.addColorStop(0.55, '#e8433a');
+    g.addColorStop(1, '#b0261f');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.clip();
+    ctx.rotate(angle);
+    ctx.fillStyle = '#ffd34d';
+    ctx.fillRect(-TOY_R, -2.6, TOY_R * 2, 5.2);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.ellipse(-3.8, -4.6, 3, 1.8, -0.6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.fill();
+  }
+
   // A cartoon bone centred on (0, 0), about 46 x 16 units.
   function traceBone(ctx) {
     const knob = 5.5;
@@ -142,7 +234,7 @@
   }
 
   class Player {
-    constructor({ canvas, manifest, assetBase, view, mediaHost, sizeFor = () => 1 }) {
+    constructor({ canvas, manifest, assetBase, view, mediaHost, sizeFor = () => 1, snowCanvas = null }) {
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
       if (!this.ctx) throw new Error('2D canvas is not available');
@@ -158,8 +250,22 @@
       this.turning = null;
       this.effect = null; // { squash, lift } while turning around
       this.prop = null; // { kind: 'bone', x, born, eaten } on the ground
-      this.propRaf = null;
       this.bowl = null; // { x, drinking } her water bowl, or null
+      this.bed = null; // { x, halfWidth } her bed (window x, clip pixels), or null
+      this.toy = null; // her ball: { x, h, vx, vy, angle, held, squash, resting } (window px)
+      this.onToyRest = null; // (x) => void, when a moving ball comes to rest
+      this.snow = { on: false, flakes: [], depth: new Float32Array(0), drawnAt: 0, shown: false };
+      // Snow gets its own see-through layer over hers, so falling flakes never
+      // redraw her (and the settled snow sits in front of her paws).
+      this.snowCanvas = snowCanvas;
+      this.snowCtx = snowCanvas ? snowCanvas.getContext('2d') : null;
+      this.snowDensity = 4; // flakes per 100 px of width
+      this.ambientRaf = null;
+      this.ambientPaused = false;
+      this.ambientLast = 0;
+      this.lastDrawAt = 0;
+      this.width = canvas.width;
+      this.height = canvas.height;
       this.shadows = true;
       this.bodyExtent = null; // { back, front } clip pixels, for her shadow
       this.source = null; // what is on the canvas now: a <video> or a pose <img>
@@ -246,6 +352,27 @@
       return { back: standingCenterX - minX, front: maxX + 1 - standingCenterX };
     }
 
+    // How far a pose reaches behind and in front of her centre (clip pixels,
+    // facing right), as drawn (before any display-size correction).
+    poseExtents(pose, threshold) {
+      const { width, height, standingCenterX } = this.manifest;
+      const img = this.poses.get(pose);
+      if (!img) throw new Error(`Unknown pose ${pose}`);
+      const data = readPixels(img, width, height);
+      let minX = width;
+      let maxX = -1;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          if (data[(y * width + x) * 4 + 3] > threshold) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+      if (maxX < 0) throw new Error(`The ${pose} pose image is empty`);
+      return { back: standingCenterX - minX, front: maxX + 1 - standingCenterX };
+    }
+
     get playing() {
       return this.active ? this.active.name : null;
     }
@@ -259,6 +386,19 @@
       if (this.canvas.height !== h) this.canvas.height = h;
       this.canvas.style.width = `${layout.width}px`;
       this.canvas.style.height = `${layout.height}px`;
+      this.width = layout.width;
+      this.height = layout.height;
+      if (this.snowCanvas) {
+        if (this.snowCanvas.width !== w) this.snowCanvas.width = w;
+        if (this.snowCanvas.height !== h) this.snowCanvas.height = h;
+        this.snowCanvas.style.width = `${layout.width}px`;
+        this.snowCanvas.style.height = `${layout.height}px`;
+      }
+      const columns = Math.ceil(layout.width / SNOW.column) + 1;
+      if (this.snow.depth.length !== columns) {
+        this.snow.depth = new Float32Array(columns);
+        this.snow.flakes = [];
+      }
     }
 
     showPose(pose) {
@@ -367,15 +507,287 @@
     setProp(prop) {
       this.prop = prop ? { ...prop, born: performance.now(), eaten: 0 } : null;
       this.draw();
-      if (this.prop && this.propRaf === null) {
-        const step = (now) => {
-          this.propRaf = null;
-          if (!this.prop) return;
-          if (!this.active) this.draw(); // a playing clip redraws anyway
-          if (now - this.prop.born < BONE_DROP_MS) this.propRaf = requestAnimationFrame(step);
-        };
-        this.propRaf = requestAnimationFrame(step);
+      this._wakeAmbient();
+    }
+
+    // ------------------------------------------------ ambient animation
+    // A light redraw loop for things that move by themselves: a bone
+    // dropping, her ball rolling, snow. It stops when nothing is moving and
+    // while paused (hidden, locked, or she is in a deep sleep).
+
+    setAmbientPaused(paused) {
+      this.ambientPaused = paused;
+      if (paused && this.ambientRaf !== null) {
+        cancelAnimationFrame(this.ambientRaf);
+        this.ambientRaf = null;
       }
+      // No flakes frozen in mid-air while paused: just the settled snow.
+      if (paused && this.snowCtx) this._drawSnowLayer(performance.now(), { flakes: false });
+      if (!paused) this._wakeAmbient();
+    }
+
+    // Something on her own canvas is moving (a dropping bone, the ball).
+    _propsMoving(now) {
+      if (this.prop && now - this.prop.born < BONE_DROP_MS) return true;
+      const t = this.toy;
+      return Boolean(t && !t.held && (!t.resting || t.squash > 0));
+    }
+
+    _snowActive() {
+      return this.snow.on || this.snow.depth.some((d) => d > 0);
+    }
+
+    _ambientBusy(now) {
+      return this._propsMoving(now) || this._snowActive();
+    }
+
+    _wakeAmbient() {
+      if (this.ambientRaf !== null || this.ambientPaused) return;
+      this.ambientLast = performance.now();
+      const tick = (now) => {
+        this.ambientRaf = null;
+        const dt = Math.min(0.05, Math.max(0, (now - this.ambientLast) / 1000));
+        this.ambientLast = now;
+        const moving = this._propsMoving(now);
+        this._stepToy(dt);
+        this._stepSnow(dt);
+        // A playing clip redraws on its own frames too; keep to about AMBIENT_FPS.
+        if ((moving || !this.snowCtx) && now - this.lastDrawAt >= 1000 / AMBIENT_FPS - 4) this.draw();
+        if (this.snowCtx && now - this.snow.drawnAt >= 1000 / SNOW_FPS - 4) this._drawSnowLayer(now);
+        if (!this.ambientPaused && this._ambientBusy(now)) this.ambientRaf = requestAnimationFrame(tick);
+      };
+      this.ambientRaf = requestAnimationFrame(tick);
+    }
+
+    // ------------------------------------------------ bed
+
+    // Her bed (null hides it). halfWidth in clip pixels.
+    setBed(bed) {
+      this.bed = bed ? { x: bed.x, halfWidth: bed.halfWidth } : null;
+      if (!this.active) this.draw();
+    }
+
+    bedHit(x, y) {
+      if (!this.bed) return false;
+      const { scale } = this.view();
+      const ground = this.manifest.groundY * scale;
+      return Math.abs(x - this.bed.x) <= this.bed.halfWidth * scale
+        && y >= ground - BED_RIM_BACK * scale && y <= ground + 4 * scale;
+    }
+
+    _drawBed(ctx, part) {
+      const { scale } = this.view();
+      const k = this.dpr * scale;
+      ctx.save();
+      ctx.setTransform(k, 0, 0, k, this.dpr * this.bed.x, this.dpr * this.manifest.groundY * scale);
+      drawBed(ctx, this.bed.halfWidth, part);
+      ctx.restore();
+    }
+
+    // ------------------------------------------------ ball
+
+    // Her ball (null hides it), resting on the ground at window x.
+    setToy(toy) {
+      this.toy = toy ? { x: toy.x, h: 0, vx: 0, vy: 0, angle: 0, held: false, squash: 0, resting: true } : null;
+      if (!this.active) this.draw();
+    }
+
+    toyHit(x, y) {
+      const t = this.toy;
+      if (!t) return false;
+      const { scale } = this.view();
+      const cy = this.manifest.groundY * scale - TOY_R * scale - t.h;
+      return Math.hypot(x - t.x, y - cy) <= (TOY_R + 7) * scale;
+    }
+
+    // Centre of the ball, window pixels.
+    toyCentre() {
+      const t = this.toy;
+      const { scale } = this.view();
+      return { x: t.x, y: this.manifest.groundY * scale - TOY_R * scale - t.h };
+    }
+
+    // Being dragged: centre at window (x, y), never below the ground.
+    holdToy(x, y) {
+      const t = this.toy;
+      if (!t) return;
+      const { scale } = this.view();
+      const r = TOY_R * scale;
+      t.held = true;
+      t.resting = false;
+      t.vx = 0;
+      t.vy = 0;
+      t.x = Math.min(Math.max(x, r), this.width - r);
+      t.h = Math.max(0, this.manifest.groundY * scale - r - y);
+      this.draw();
+    }
+
+    // Let go or nudge: velocity in window px/s (vy positive = upwards).
+    launchToy(vx, vy) {
+      const t = this.toy;
+      if (!t) return;
+      const { scale } = this.view();
+      const max = TOY.maxSpeed * scale;
+      t.held = false;
+      t.resting = false;
+      t.vx = Math.max(-max, Math.min(max, vx));
+      t.vy = Math.max(-max, Math.min(max, vy));
+      this._wakeAmbient();
+    }
+
+    // A squeak: the ball squashes for a moment.
+    squeakToy() {
+      if (!this.toy) return;
+      this.toy.squash = 1;
+      this._wakeAmbient();
+    }
+
+    _stepToy(dt) {
+      const t = this.toy;
+      if (!t || t.held) return;
+      t.squash = Math.max(0, t.squash - dt * 5);
+      if (t.resting) return;
+      const { scale } = this.view();
+      const r = TOY_R * scale;
+      t.vy -= TOY.gravity * scale * dt;
+      t.h += t.vy * dt;
+      if (t.h <= 0) {
+        t.h = 0;
+        t.vy = t.vy < -60 * scale ? -t.vy * TOY.bounce : 0;
+      }
+      if (t.h === 0 && t.vy === 0) {
+        const slow = TOY.rollDecel * scale * dt;
+        t.vx = Math.abs(t.vx) <= slow ? 0 : t.vx - Math.sign(t.vx) * slow;
+      }
+      t.x += t.vx * dt;
+      if (t.x < r || t.x > this.width - r) {
+        t.x = Math.min(Math.max(t.x, r), this.width - r);
+        t.vx = -t.vx * TOY.wallBounce;
+      }
+      t.angle += (t.vx * dt) / r;
+      if (t.h === 0 && t.vy === 0 && Math.abs(t.vx) < TOY.restSpeed * scale) {
+        t.vx = 0;
+        t.resting = true;
+        if (this.onToyRest) this.onToyRest(t.x);
+      }
+    }
+
+    _drawToy(ctx) {
+      const t = this.toy;
+      const { scale } = this.view();
+      const k = this.dpr * scale;
+      const sq = 1 - 0.22 * t.squash;
+      const cy = this.manifest.groundY * scale - TOY_R * scale * sq - t.h;
+      ctx.save();
+      ctx.setTransform(k * (2 - sq), 0, 0, k * sq, this.dpr * t.x, this.dpr * cy);
+      drawToy(ctx, t.angle);
+      ctx.restore();
+    }
+
+    // ------------------------------------------------ snow
+
+    setSnow(on) {
+      if (on === this.snow.on) return;
+      this.snow.on = on;
+      if (on) {
+        // Start with flakes already on their way down, not a wall of them at the top.
+        const { scale } = this.view();
+        const want = Math.round((this.width / 100) * this.snowDensity);
+        this.snow.flakes = Array.from({ length: want }, () => this._newFlake(scale, true));
+        this._wakeAmbient();
+      }
+    }
+
+    _newFlake(scale, anywhere) {
+      const ground = this.manifest.groundY * scale;
+      return {
+        x: Math.random() * this.width,
+        y: anywhere ? Math.random() * ground : -4,
+        r: (1 + Math.random() * 1.6) * scale,
+        vy: (22 + Math.random() * 26) * scale,
+        sway: (6 + Math.random() * 10) * scale,
+        phase: Math.random() * Math.PI * 2,
+      };
+    }
+
+    _stepSnow(dt) {
+      const snow = this.snow;
+      const depth = snow.depth;
+      const { scale } = this.view();
+      if (!snow.on) {
+        snow.flakes = [];
+        const melt = SNOW.meltPerSec * scale * dt;
+        for (let i = 0; i < depth.length; i += 1) depth[i] = Math.max(0, depth[i] - melt);
+        return;
+      }
+      const ground = this.manifest.groundY * scale;
+      const cap = SNOW.maxDepth * scale;
+      const add = SNOW.perFlake * scale;
+      for (const f of snow.flakes) {
+        f.phase += dt * 1.3;
+        f.y += f.vy * dt;
+        f.x += Math.sin(f.phase) * f.sway * dt;
+        const col = Math.max(0, Math.min(depth.length - 1, Math.round(f.x / SNOW.column)));
+        if (f.y >= ground - depth[col]) {
+          depth[col] = Math.min(cap, depth[col] + add);
+          if (col > 0) depth[col - 1] = Math.min(cap, depth[col - 1] + add * 0.5);
+          if (col < depth.length - 1) depth[col + 1] = Math.min(cap, depth[col + 1] + add * 0.5);
+          Object.assign(f, this._newFlake(scale, false));
+        }
+      }
+    }
+
+    _drawSnowLayer(now, { flakes = true } = {}) {
+      const ctx = this.snowCtx;
+      this.snow.drawnAt = now;
+      const active = this._snowActive();
+      if (!active && !this.snow.shown) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.snowCanvas.width, this.snowCanvas.height);
+      this.snow.shown = active;
+      if (!active) return;
+      this._drawSnowPile(ctx);
+      if (flakes) this._drawFlakes(ctx);
+    }
+
+    _drawSnowPile(ctx) {
+      const depth = this.snow.depth;
+      if (!depth.some((v) => v > 0.05)) return;
+      const { scale } = this.view();
+      const ground = this.manifest.groundY * scale;
+      ctx.save();
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.beginPath();
+      ctx.moveTo(0, ground);
+      for (let i = 0; i < depth.length; i += 1) {
+        const prev = depth[Math.max(0, i - 1)];
+        const next = depth[Math.min(depth.length - 1, i + 1)];
+        ctx.lineTo(i * SNOW.column, ground - (prev + 2 * depth[i] + next) / 4);
+      }
+      ctx.lineTo(this.width, ground);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(250, 252, 255, 0.95)';
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(180, 200, 225, 0.6)';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    _drawFlakes(ctx) {
+      const flakes = this.snow.flakes;
+      if (!flakes.length) return;
+      ctx.save();
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.fillStyle = '#ffffff';
+      for (const f of flakes) {
+        if (f.y < 0) continue;
+        ctx.globalAlpha = 0.9 * Math.min(1, f.y / SNOW.fadeInPx);
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
     // The water bowl (null hides it).
@@ -463,6 +875,11 @@
         drawShadow(ctx, this.dpr * this.prop.x, groundY - k, 30 * k * (1 - 0.6 * this.prop.eaten), 3.5 * k, 0.22);
       }
       if (this.bowl) drawShadow(ctx, this.dpr * this.bowl.x, groundY - k, 31 * BOWL_SCALE * k, 4 * k, 0.26);
+      if (this.bed) drawShadow(ctx, this.dpr * this.bed.x, groundY - k, (this.bed.halfWidth + 6) * k, 5 * k, 0.26);
+      if (this.toy) {
+        const up = Math.min(1, this.toy.h / (60 * scale)); // fainter and smaller as it flies
+        drawShadow(ctx, this.dpr * this.toy.x, groundY - k, TOY_R * 1.2 * k * (1 - 0.5 * up), 2.6 * k, 0.24 * (1 - 0.7 * up));
+      }
     }
 
     _drawBowl(ctx) {
@@ -476,9 +893,12 @@
 
     draw() {
       const ctx = this.ctx;
+      this.lastDrawAt = performance.now();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (!this.snowCtx) this._drawSnowPile(ctx);
       if (this.shadows) this._drawShadows(ctx);
+      if (this.bed) this._drawBed(ctx, 'back'); // she lies in it...
       if (this.prop) this._drawProp(ctx); // behind her, so she stands over it
       const src = this.source;
       if (src && !(src instanceof HTMLVideoElement && src.readyState < HAVE_CURRENT_DATA)) {
@@ -492,7 +912,10 @@
         ctx.setTransform(k * dir * squash * size, 0, 0, k * size, this.dpr * cx, keepFeetDown - lift);
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
+      if (this.bed) this._drawBed(ctx, 'front'); // ...behind its front rim
       if (this.bowl) this._drawBowl(ctx); // in front of her, so her snout dips into it
+      if (this.toy) this._drawToy(ctx);
+      if (!this.snowCtx) this._drawFlakes(ctx);
       if (this.onDraw) this.onDraw();
     }
 

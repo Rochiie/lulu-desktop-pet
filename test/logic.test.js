@@ -250,3 +250,15 @@ test('lying-down artwork is shown at standing size, eased in and out', () => {
     }
   }
 });
+
+test('run root motion matches the run clips', () => {
+  const m = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
+  require('../src/renderer/root-motion.js');
+  const run = globalThis.LuluRootMotion.run;
+  for (const part of ['start', 'loop', 'stop']) {
+    assert.equal(run[part].length, m.clips[`run_${part}`].frames, part);
+    assert.ok(Math.min(...run[part]) >= 0);
+  }
+  assert.equal(run.start[0], 0);
+  assert.equal(run.stop[run.stop.length - 1], 0);
+});
