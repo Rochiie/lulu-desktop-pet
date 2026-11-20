@@ -221,6 +221,42 @@
       "endPose": "stand",
       "use": "one-shot: slows from a gallop to standing",
       "loop": false
+    },
+    "stand_idle": {
+      "file": "stand_idle.webm",
+      "frames": 95,
+      "seconds": 3.958,
+      "startPose": "stand",
+      "endPose": "stand",
+      "use": "breathing while she stands between actions: chest moving, an ear flick, a swish of her tail",
+      "loop": false
+    },
+    "pickup_lift": {
+      "file": "pickup_lift.webm",
+      "frames": 94,
+      "seconds": 3.917,
+      "startPose": "stand",
+      "endPose": "held",
+      "use": "picked up: lifted off the floor, then looks round at you",
+      "loop": false
+    },
+    "pickup_held": {
+      "file": "pickup_held.webm",
+      "frames": 35,
+      "seconds": 1.458,
+      "startPose": "held",
+      "endPose": "held",
+      "use": "held up while you drag her: loop seamlessly",
+      "loop": true
+    },
+    "pickup_down": {
+      "file": "pickup_down.webm",
+      "frames": 90,
+      "seconds": 3.75,
+      "startPose": "held",
+      "endPose": "stand",
+      "use": "put back down on the floor",
+      "loop": false
     }
   },
   "notes": "All clips: transparent VP9 WebM (alpha), 24fps, same canvas size and same ground line, Lulu facing right. Flip horizontally for left-facing.",
@@ -228,6 +264,7 @@
   "walkSpeedPxPerSec": 125,
   "poses": {
     "stand": "walk_start_first.png",
-    "sleep": "sleep_loop_first.png"
+    "sleep": "sleep_loop_first.png",
+    "held": "pickup_held_first.png"
   }
 }

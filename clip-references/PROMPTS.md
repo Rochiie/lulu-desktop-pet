@@ -9,6 +9,7 @@ this folder:
 | `stand_facing_right_on_green.png` | Standing pose (start and end of most tricks) |
 | `stand_facing_left_on_green.png` | Standing pose mirrored: the **last frame of the turn** |
 | `sleep_pose_on_green.png` | Sleeping pose |
+| `pickup_frame_on_green.png` | Standing pose, smaller, with room above her: **first and last frame of the pick-up** |
 | `*_facing_*.png` / `sleep_pose.png` (no "green") | The same poses with a transparent background |
 
 Use the `_on_green` versions if your tool doesn't accept transparent images.
@@ -101,6 +102,40 @@ First and last frame: `stand_facing_right_on_green.png`.
 > paws, quick alternating scrapes, then stops, lifts its head and stands still again. No
 > dirt, no hole, no particles: the floor stays clean and flat.
 
+**14. Breathing while standing** (`stand_idle`, 5 seconds)
+First and last frame: `stand_facing_right_on_green.png`. She plays this between
+actions instead of freezing, so keep every movement small.
+> The dog stands still and relaxed in the same spot, breathing calmly: its chest and belly
+> gently rise and fall, it blinks slowly, one ear twitches once, its nose sniffs the air once,
+> and its tail sways slowly. Its feet never move and its head stays in side profile. It ends
+> exactly as it started.
+
+Optional second one for variety (`stand_idle2`, 5 seconds), same frames:
+> The dog stands relaxed in the same spot, breathing calmly. It shifts its weight very slightly,
+> glances up and a little towards the camera, licks its lips once, then looks straight ahead
+> again in side profile. Its feet never move. It ends exactly as it started.
+
+**15. Picked up** (`pickup`, 10 seconds)
+First and last frame: `pickup_frame_on_green.png` (not the usual one: this one leaves
+room above her). Don't use the base prompt for this one; use this whole prompt:
+> A black and tan miniature dachshund with a smooth, glossy short coat: black body, tan
+> eyebrows, tan muzzle, tan chest and tan paws, long soft floppy ears, seen in exact side
+> profile on a solid flat chroma-green background (#00B140). Locked-off static camera: no
+> camera movement, no zoom, no cuts. Even, soft studio lighting, no shadows. No people, no
+> hands, no props, no text.
+> The dog is gently lifted straight up off the floor, as if scooped up by invisible hands under
+> its chest and belly. Its body stays level and supported the whole time, and it rises about one
+> head-height. Its legs hang down loosely and relaxed. It stays up in the air for about five
+> seconds, happily wagging its tail, ears swaying, paws paddling gently in the air now and then,
+> glancing towards the camera. Then it is gently lowered straight back down until all four paws
+> touch the floor, and it stands still in exact side profile facing right, as it started.
+
+Negative prompt (if your tool has one): `hands, arms, person, harness, leash, collar, shadow,
+camera movement, zoom, cut, text, watermark`.
+
+I cut this into three clips: being lifted, a seamless dangling loop (she stays in it for as long
+as you hold her), and being put back down.
+
 ## Turning a video into a Lulu clip
 
 From the project folder (needs ffmpeg: `winget install Gyan.FFmpeg`):
@@ -113,11 +148,21 @@ npm run make-clip -- "C:\path\to\turn.mp4" turn --ends-facing left
 For a run (two videos filmed with the camera tracking her):
 
 ```
-npm run make-clip -- --run "C:path	oun-start.mp4" "C:path	oun-stop.mp4" run
+npm run make-clip -- --run "C:\path\to\run-start.mp4" "C:\path\to\run-stop.mp4" run
 ```
 
 This writes `run_start`, `run_loop` and `run_stop`, and prints their manifest
 entries and root motion (paste the root motion into `src/renderer/root-motion.js`).
+
+For the pick-up video:
+
+```
+npm run make-clip -- "C:\path\to\pickup.mp4" pickup --pickup --no-zoom
+```
+
+This keeps her height off the floor (scaled down if her ears would leave the
+clip), writes `pickup_lift`, `pickup_held` (a loop) and `pickup_down`, and the
+`held` pose picture `pickup_held_first.png`.
 
 It removes the green background and the watermark, lines her up with her
 standing pose, undoes any camera zoom, trims the still frames, blends the ends

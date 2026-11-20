@@ -57,8 +57,9 @@
     const onDragMove = (event) => {
       const dx = event.clientX - drag.startX;
       const dy = event.clientY - drag.startY;
-      // Her ball can be picked up and moved any way; the rest slide sideways.
-      const far = drag.kind === 'toy' ? Math.hypot(dx, dy) : Math.abs(dx);
+      // She and her ball can be picked up by moving the mouse any way; her bowl
+      // and bed only slide sideways.
+      const far = drag.kind === 'toy' || drag.kind === 'lulu' ? Math.hypot(dx, dy) : Math.abs(dx);
       if (!drag.moved && far > config.dragThresholdPx) {
         drag.moved = true;
         if (drag.kind === 'lulu') behaviour.beginDrag();

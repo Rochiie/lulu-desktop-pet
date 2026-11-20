@@ -14,6 +14,10 @@
   const BOWL_SCALE = 1.25; // bowl drawing units per clip pixel
   // The next clip needs a few ms to show its first frame; start it this much early.
   const HANDOVER_LEAD_MS = 6;
+  // Once a clip has played, Chromium keeps its decoder (about 4.5 MB) until the
+  // video is reloaded. Reloading a clip that has sat unused this long frees it;
+  // a reloaded clip still starts within a frame, so hand-overs stay seamless.
+  const RELEASE_IDLE_MS = 20000;
   const AMBIENT_FPS = 30; // redraws for the rolling ball and a dropping bone
   const SNOW_FPS = 20; // the snow has its own layer, redrawn this often
   const BED_RIM_BACK = 44; // bed rim heights in clip pixels above her ground line
@@ -245,6 +249,7 @@
       this.names = new Map(); // video or pose image -> { clip } / { pose }
       this.mediaHost = mediaHost;
       this.videos = new Map();
+      this.releaseTimers = new Map(); // clip name -> timer that frees its decoder
       this.poses = new Map();
       this.active = null;
       this.turning = null;
@@ -337,7 +342,7 @@
       const { width, height, standingCenterX } = this.manifest;
       let minX = width;
       let maxX = -1;
-      for (const img of this.poses.values()) {
+      for (const img of ['stand', 'sleep'].map((p) => this.poses.get(p))) { // on the ground
         const data = readPixels(img, width, height);
         for (let y = 0; y < height; y += 1) {
           for (let x = 0; x < width; x += 1) {
@@ -423,6 +428,8 @@
       if (this.turning) return Promise.reject(new Error(`Cannot play ${name} while turning`));
       const video = this.videos.get(name);
       if (!video) return Promise.reject(new Error(`Unknown clip ${name}`));
+      clearTimeout(this.releaseTimers.get(name));
+      this.releaseTimers.delete(name);
       return new Promise((resolve, reject) => {
         const a = {
           name, video, onFrame, resolve, reject, rate,
@@ -446,6 +453,14 @@
     // Let a looping clip finish its current cycle and then end.
     endLoop() {
       if (this.active) this.active.video.loop = false;
+    }
+
+    // Change how fast the playing clip plays from now on.
+    setRate(rate) {
+      if (!(rate > 0)) throw new RangeError(`Bad playback rate ${rate}`);
+      if (!this.active) return;
+      this.active.rate = rate;
+      this.active.video.playbackRate = rate;
     }
 
     // Turn around on the spot, using the current (standing) pose: she narrows
@@ -993,8 +1008,19 @@
       a.video.loop = false;
       a.video.playbackRate = 1;
       a.video.currentTime = 0; // park it at the start, ready for next time
+      this._releaseLater(a.name);
       if (err) a.reject(err);
       else a.resolve();
+    }
+
+    // Reload a clip that stays unused for RELEASE_IDLE_MS, freeing its decoder.
+    _releaseLater(name) {
+      clearTimeout(this.releaseTimers.get(name));
+      this.releaseTimers.set(name, setTimeout(() => {
+        this.releaseTimers.delete(name);
+        if (this.active && this.active.name === name) return;
+        this.videos.get(name).load();
+      }, RELEASE_IDLE_MS));
     }
   }
 

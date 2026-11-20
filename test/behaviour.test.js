@@ -120,6 +120,10 @@ class FakePlayer {
     if (this.active) this.active.loop = false;
   }
 
+  setRate(rate) {
+    if (this.active) (this.rateChanges = this.rateChanges || []).push({ name: this.active.name, rate });
+  }
+
   turn({ onFlip }) {
     if (this.active || this.turning) return Promise.reject(new Error('turn while busy'));
     this.history.push('(turn)');
@@ -251,6 +255,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
       yawnBeforeNap: 0,
       zoomiesWeight: 0,
       toyWeight: 0,
+      idleClipChance: 0,
       ...config,
     },
     api,
@@ -943,4 +948,73 @@ test('the ambient animation rests while she is hidden', () => {
   t.behaviour.setRunning(false);
   assert.equal(t.player.ambientPaused, true);
   t.stop();
+});
+
+test('dragging her picks her up, holds her while you move her and puts her down', async () => {
+  const t = setup({ config: { weights: { sit: 1 } }, layout: makeLayout(1, 2000), xFraction: 0.5 });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.beginDrag();
+  await until(() => t.player.playing === 'pickup_held');
+  t.behaviour.dragTo(600);
+  await new Promise((r) => setTimeout(r, 30)); // she keeps wriggling while held
+  assert.equal(t.player.playing, 'pickup_held');
+  t.behaviour.endDrag();
+  await until(() => !t.behaviour.carrying);
+  await until(() => t.player.history.length > t.player.history.lastIndexOf('pickup_down') + 1);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const seen = t.player.history.slice(before);
+  assert.deepEqual(seen.slice(0, 2), ['pickup_lift', 'pickup_held']);
+  assert.ok(seen.includes('pickup_down'));
+  assert.equal(t.behaviour.cx, 600);
+  assert.equal(t.behaviour.pose, 'stand');
+  assert.ok(t.positions.length >= 1, 'saves where she was put down');
+});
+
+test('let go while she is still being lifted: quickly up, then straight back down', async () => {
+  const t = setup({ config: { weights: { sit: 1 } } });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.beginDrag();
+  t.behaviour.endDrag();
+  await until(() => !t.behaviour.carrying);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.deepEqual(t.player.history.slice(before, before + 2), ['pickup_lift', 'pickup_down']);
+  assert.deepEqual(t.player.rateChanges, [{ name: 'pickup_lift', rate: globalThis.LuluConfig.letGoRate }]);
+});
+
+test('asleep, she is slid along the floor (not picked up) and wakes when let go', async () => {
+  const t = setup({ config: { weights: { sit: 1 }, napSeconds: [60, 60] } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.command('nap');
+  await until(() => t.player.playing === 'sleep_loop', 8000);
+  const before = t.player.history.length;
+  t.behaviour.beginDrag();
+  t.behaviour.dragTo(300);
+  t.behaviour.endDrag();
+  await until(() => t.player.history.slice(before).includes('wake_up'), 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.ok(!t.player.history.slice(before).some((n) => n.startsWith('pickup_')));
+});
+
+test('standing between actions, she breathes instead of freezing', async () => {
+  const t = setup({ config: { weights: { sit: 1 }, idleClipChance: 1, holdSeconds: [3.96, 3.97] } });
+  await until(() => t.player.history.includes('stand_idle'), 8000);
+  await until(() => t.player.history.lastIndexOf('sit') > t.player.history.indexOf('stand_idle'), 8000);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+});
+
+test('a click while she is breathing cuts it short and she answers straight away', async () => {
+  const t = setup({ config: { weights: { sit: 1 }, idleClipChance: 1, holdSeconds: [3.96, 3.97] } });
+  await t.player.next('stand_idle');
+  t.behaviour.click();
+  await until(() => t.player.history.includes('happy'));
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const i = t.player.history.indexOf('stand_idle');
+  assert.equal(t.player.history[i + 1], 'happy');
 });

@@ -5,6 +5,15 @@
   root.LuluConfig = Object.freeze({
     // Standing still between actions.
     holdSeconds: [3, 8],
+    // Share of holds long enough for it in which she breathes (the stand_idle
+    // clip: chest moving, an ear twitch, a swish of her tail) instead of
+    // standing frozen.
+    idleClipChance: 0.7,
+    // Picked up (dragging her): how fast the lift plays, how fast whatever is
+    // left of it plays once you let go, and how fast she is put down.
+    pickupRate: 1.4,
+    letGoRate: 2.5,
+    putDownRate: 1.3,
     // Weighted random action after a hold. Never the same non-walk action twice.
     // "look" (turning to look at you) is the most common thing she does
     // besides walking.

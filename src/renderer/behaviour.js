@@ -17,6 +17,7 @@
 
   const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat', 'trick', 'throw']);
   const TRICKS = Object.freeze(['head_tilt', 'play', 'roll_over', 'paw', 'beg', 'spin', 'yawn', 'scratch', 'dig']);
+  const PICKUP_CLIPS = Object.freeze(['pickup_lift', 'pickup_held', 'pickup_down']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
@@ -44,6 +45,7 @@
 
       this.running = false;
       this.dragging = false;
+      this.carrying = false; // being picked up, held or put down (carry())
       this.userIdle = false;
       this.idleSince = 0;
       this.idleSleep = false; // asleep because the user is away
@@ -670,9 +672,17 @@
       else this.interrupt();
     }
 
+    // Dragging her. Standing, she is picked up (lifted, held while you move
+    // her, put back down); asleep, she slides along the floor as before.
     beginDrag() {
       this.dragging = true;
+      if (this.carrying) return; // grabbed again while being put down: carry() lifts her again
       this.interrupt();
+      if (this.pose === 'stand' && PICKUP_CLIPS.every((c) => this.hasClip(c))) {
+        this.carrying = true;
+        this.carry().catch((err) => this.api.reportError(`Pick-up stopped: ${err && err.stack ? err.stack : err}`));
+        return;
+      }
       this.player.showPose(this.pose);
     }
 
@@ -684,15 +694,42 @@
 
     endDrag() {
       this.dragging = false;
+      if (this.carrying) {
+        // Let go: she finishes being lifted (quickly) or her current wriggle,
+        // then carry() puts her down.
+        this.player.endLoop();
+        if (this.player.playing === 'pickup_lift') this.player.setRate(this.config.letGoRate);
+        return;
+      }
+      this.dropped();
+    }
+
+    dropped() {
       this.savePosition();
       if (this.pose === 'sleep') this.pending = { type: 'wake' };
       this.openGate();
     }
 
+    async carry() {
+      try {
+        do {
+          await this.playClip('pickup_lift', { rate: this.config.pickupRate });
+          while (this.dragging) await this.playClip('pickup_held', { loop: true });
+          await this.playClip('pickup_down', { rate: this.config.putDownRate });
+        } while (this.dragging);
+      } catch (err) {
+        if (!(err instanceof Interrupt)) throw err;
+        this.pose = 'stand'; // stopped part-way (hidden, say): back on the floor
+      } finally {
+        this.carrying = false;
+        if (!this.dragging) this.dropped();
+      }
+    }
+
     // Rubbed with the mouse. Awake: she wags (happy). Asleep: she stays
     // asleep and her nap gets a little longer.
     pet() {
-      if (this.dragging) return;
+      if (this.dragging || this.carrying) return;
       const now = Date.now();
       if (this.pose === 'sleep') {
         if (!this.idleSleep) this.napEnds = Math.max(this.napEnds, now + this.config.petNapExtendMs);
@@ -721,7 +758,7 @@
     }
 
     async gate() {
-      while (!this.running || this.dragging) {
+      while (!this.running || this.dragging || this.carrying) {
         await new Promise((resolve) => this.gateWaiters.push(resolve));
       }
     }
@@ -764,7 +801,7 @@
           this.onNotify = null;
           this.cancelWait = null;
           if (err instanceof Interrupt) {
-            if (this.running && !this.dragging) this.player.showPose(this.pose);
+            if (this.running && !this.dragging && !this.carrying) this.player.showPose(this.pose);
             continue;
           }
           this.api.reportError(`Behaviour error: ${err && err.stack ? err.stack : err}`);
@@ -823,10 +860,42 @@
       const mood = this.tune ? null : this.mood();
       const [lo, hi] = this.tune ? this.config.tuneHoldSeconds : this.config.holdSeconds;
       const holdScale = mood ? mood.hold : 1;
-      const why = await this.wait(L.randRange(this.rng, lo, hi) * holdScale * 1000);
+      const why = await this.hold(L.randRange(this.rng, lo, hi) * holdScale * 1000);
       if (why !== 'timeout') return; // a request or idle change: handle it next step
       const weights = this.tune ? this.config.tuneWeights : this.weightsFor(mood);
       await this.perform(L.pickAction(this.rng, weights, this.lastAction));
+    }
+
+    // Stands for ms. In most holds long enough for it she breathes (the
+    // stand_idle clip) part-way through instead of standing frozen. Like
+    // wait(), resolves 'notify' early when something needs her, cutting the
+    // breathing short.
+    async hold(ms) {
+      const clip = this.manifest.clips.stand_idle;
+      if (!clip || ms < clip.seconds * 1000 || this.rng() >= this.config.idleClipChance) return this.wait(ms);
+      const end = Date.now() + ms;
+      const before = await this.wait(this.rng() * (ms - clip.seconds * 1000));
+      if (before !== 'timeout') return before;
+      const breathing = await this.breatheStanding();
+      if (breathing !== 'timeout') return breathing;
+      return this.wait(Math.max(0, end - Date.now()));
+    }
+
+    async breatheStanding() {
+      let cut = false;
+      this.onNotify = () => {
+        cut = true;
+        this.onNotify = null;
+        this.player.stop();
+      };
+      try {
+        await this.playClip('stand_idle');
+      } catch (err) {
+        if (!cut || !(err instanceof Interrupt)) throw err;
+      } finally {
+        if (!cut) this.onNotify = null;
+      }
+      return cut ? 'notify' : 'timeout';
     }
 
     async perform(type, req = {}) {

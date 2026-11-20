@@ -103,6 +103,13 @@ test('manifest validation names the problem', () => {
   assert.throws(() => validateManifest(m), /clip "sniff" is missing/);
 });
 
+test('clips may use extra poses, but only ones the manifest has a picture for', () => {
+  const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
+  assert.equal(m.clips.pickup_held.startPose, 'held');
+  delete m.poses.held;
+  assert.throws(() => validateManifest(m), /clip "pickup_lift" needs startPose\/endPose from "poses"/);
+});
+
 test('new preferences have safe ranges and defaults', () => {
   const { prefsFor } = require('../src/main/settings');
   const bad = sanitize({ tripChance: 2, lookMultiplier: 0, moodStrength: -1, followSeconds: 9999, noticeMouse: 'no', walkIn: 1 });

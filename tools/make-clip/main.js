@@ -22,6 +22,11 @@
 //   --loop-from N  look for the repeating stride from source frame N on
 //   --period N     force the stride length in frames
 //
+// Picked up (one video: lifted off the floor, held, put back down):
+//   npm run make-clip -- <video.mp4> <name> --pickup [--no-zoom]
+// writes <name>_lift, <name>_held (a loop) and <name>_down, and the held pose
+// picture <name>_held_first.png, and prints their manifest entries.
+//
 // Options:
 //   --from N / --to N   use only source frames N..M (e.g. to cut before a
 //                       generator's end-of-clip zoom or morph)
@@ -49,7 +54,7 @@ function parseArgs() {
   if (self < 0) throw new Error('Could not find this script in the command line');
   const raw = process.argv.slice(self + 1);
   const positional = [];
-  const opts = { run: false, loopFrom: null, period: null, endsFacing: 'right', from: null, to: null, zoom: true, zoomFrom: null, zoomTo: null, blendEnd: 6, minMatch: 0.85, dryRun: false };
+  const opts = { run: false, pickup: false, loopFrom: null, period: null, endsFacing: 'right', from: null, to: null, zoom: true, zoomFrom: null, zoomTo: null, blendEnd: 6, minMatch: 0.85, dryRun: false };
   const int = (s, flag) => {
     const n = Number(s);
     if (!Number.isInteger(n) || n < 0) throw new Error(`${flag} needs a frame number`);
@@ -57,6 +62,7 @@ function parseArgs() {
   };
   for (let i = 0; i < raw.length; i += 1) {
     if (raw[i] === '--run') opts.run = true;
+    else if (raw[i] === '--pickup') opts.pickup = true;
     else if (raw[i] === '--loop-from') opts.loopFrom = int(raw[++i], '--loop-from');
     else if (raw[i] === '--period') opts.period = int(raw[++i], '--period');
     else if (raw[i] === '--ends-facing') opts.endsFacing = raw[++i];
@@ -138,6 +144,7 @@ ipcMain.handle('job', () => (job.run ? {
   blendEnd: job.blendEnd,
   minMatch: job.minMatch,
   dryRun: job.dryRun,
+  pickup: job.pickup,
   startRef: path.join(REFS, 'stand_facing_right.png'),
   endRef: path.join(REFS, job.endsFacing === 'left' ? 'stand_facing_left.png' : 'stand_facing_right.png'),
 }));
@@ -175,6 +182,22 @@ function finishRun(report) {
   console.log("Root motion (clip pixels per frame):");
   for (const [part, values] of Object.entries(report.motion)) console.log(`  ${part}: [${values.join(', ')}]`);
 }
+function finishPickup(report) {
+  const parts = [['lift', 'stand', 'held', false], ['held', 'held', 'held', true], ['down', 'held', 'stand', false]];
+  const entries = {};
+  for (const [part, startPose, endPose, loop] of parts) {
+    const name = `${job.name}_${part}`;
+    encode(path.join(framesDir, part), path.join(ROOT, 'assets', `${name}.webm`));
+    const frames = report.frames[part];
+    entries[name] = { file: `${name}.webm`, frames, seconds: Number((frames / 24).toFixed(3)), startPose, endPose, loop };
+  }
+  const pose = `${job.name}_held_first.png`;
+  fs.copyFileSync(path.join(framesDir, 'held_pose.png'), path.join(ROOT, 'assets', pose));
+  console.log(`Wrote ${path.join('assets', pose)}`);
+  console.log('Manifest entries:');
+  console.log(JSON.stringify(entries, null, 2));
+  console.log(`Pose: "held": "${pose}"`);
+}
 ipcMain.handle('log', (_e, line) => console.log(line));
 ipcMain.handle('fail', (_e, message) => {
   console.error(`Failed: ${message}`);
@@ -187,9 +210,10 @@ ipcMain.handle('done', (_e, report) => {
     app.exit(0);
     return;
   }
-  if (job.run) {
+  if (job.run || job.pickup) {
     try {
-      finishRun(report);
+      if (job.run) finishRun(report);
+      else finishPickup(report);
       fs.rmSync(framesDir, { recursive: true, force: true });
       app.exit(0);
     } catch (err) {
