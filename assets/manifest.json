@@ -80,7 +80,7 @@
     "sleep_loop": {
       "file": "sleep_loop.webm",
       "frames": 120,
-      "seconds": 5.0,
+      "seconds": 5,
       "startPose": "sleep",
       "endPose": "sleep",
       "use": "loop seamlessly",
@@ -102,6 +102,16 @@
       "startPose": "stand",
       "endPose": "stand",
       "use": "one-shot: play bow then shake",
+      "loop": false
+    },
+    "turn": {
+      "file": "turn.webm",
+      "frames": 100,
+      "seconds": 4.167,
+      "startPose": "stand",
+      "endPose": "stand",
+      "flipsFacing": true,
+      "use": "one-shot: turns around on the spot; ends facing the other way (facing left when drawn unflipped)",
       "loop": false
     }
   },

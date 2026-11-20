@@ -67,7 +67,10 @@ class FakePlayer {
 
   setBowlDrinking(drinking) {
     if (this.bowl) this.bowl.drinking = drinking;
-    if (drinking) this.drinks = (this.drinks || 0) + 1;
+    if (drinking) {
+      this.drinks = (this.drinks || 0) + 1;
+      if (this.onDrink) this.onDrink();
+    }
   }
 
   endLoop() {
@@ -231,7 +234,9 @@ test('walks stay on screen and turn around at the edges', async () => {
   Object.defineProperty(t.behaviour, 'dir', {
     get: () => dir,
     set: (v) => {
-      if (v !== dir && !t.player.turning) instantFlips.push(t.player.history.length);
+      // Allowed: during the squash turn, or as the turn clip finishes.
+      const justTurned = !t.player.playing && t.player.history[t.player.history.length - 1] === 'turn';
+      if (v !== dir && !t.player.turning && !justTurned) instantFlips.push(t.player.history.length);
       dir = v;
     },
   });
@@ -239,9 +244,10 @@ test('walks stay on screen and turn around at the edges', async () => {
   t.stop();
   assert.deepEqual(t.errors, []);
   assert.deepEqual(instantFlips, [], 'she flipped without turning');
-  assert.ok(t.player.history.includes('(turn)'));
+  assert.ok(t.player.history.includes('turn'), 'used the turn clip');
+  assert.equal(t.player.history.includes('(turn)'), false, 'no squash-flip when the clip exists');
   // A turn only ever happens while standing: never inside a walk.
-  assert.doesNotMatch(t.player.history.join(' '), /walk_start \(turn\)|walk_loop \(turn\)/);
+  assert.doesNotMatch(t.player.history.join(' '), /walk_start turn|walk_loop turn/);
   for (const p of t.positions) assert.ok(inRange(p), `off screen: ${JSON.stringify(p)}`);
   // She must have used both directions.
   assert.ok(t.positions.some((p) => p.dir > 0) && t.positions.some((p) => p.dir < 0));
@@ -575,13 +581,14 @@ test('the water bowl: she walks over and drinks with her nose exactly in it', as
     await until(() => t.player.history.length >= 1);
     const before = t.player.history.length;
     // She may already have had a drink of her own accord; count from here.
-    const drinksBefore = t.player.drinks || 0;
+    let at = null; // where she is the moment she starts drinking
     t.behaviour.request('drink');
-    await until(() => (t.player.drinks || 0) > drinksBefore && !t.player.playing && !t.player.turning, 8000);
+    t.player.onDrink = () => { at = { cx: t.behaviour.cx, dir: t.behaviour.dir, bowl: t.player.bowl.x }; };
+    await until(() => at !== null, 8000);
     t.stop();
     assert.deepEqual(t.errors, []);
-    const bowl = t.player.bowl.x;
-    const nose = t.behaviour.cx + t.behaviour.dir * reach;
+    const bowl = at.bowl;
+    const nose = at.cx + at.dir * reach;
     assert.ok(Math.abs(nose - bowl) < 0.5, `start ${x0}: nose ${nose.toFixed(1)}, bowl ${bowl.toFixed(1)}`);
     assert.match(t.player.history.slice(before).join(' '), /sniff/);
   }
@@ -605,4 +612,17 @@ test('the bowl can be moved and switched off', () => {
   assert.equal(t.player.bowl, null);
   t.behaviour.setPrefs({ ...t.behaviour.prefs, shadow: false });
   assert.equal(t.player.shadows, false);
+});
+
+test('without a turn clip she falls back to the quick squash-and-flip', async () => {
+  const saved = manifest.clips.turn;
+  delete manifest.clips.turn;
+  try {
+    const t = setup({ config: { weights: { walk: 1 } }, xFraction: 0.2, layout: makeLayout(1, 3000) });
+    await until(() => t.player.history.includes('(turn)'), 8000);
+    t.stop();
+    assert.deepEqual(t.errors, []);
+  } finally {
+    manifest.clips.turn = saved;
+  }
 });

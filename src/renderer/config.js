@@ -66,6 +66,9 @@
 
     // Turning around: she narrows to this share of her width, flips, and
     // widens again, with a small hop (clip pixels).
+    // The turn clip (turn.webm) plays this much faster than it was made.
+    turnClipRate: 1.6,
+    // Without a turn clip she uses a quick squash-and-flip instead:
     turnMs: 420,
     turnMinSquash: 0.08,
     turnLiftPx: 7,

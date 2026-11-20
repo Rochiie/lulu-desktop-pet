@@ -749,10 +749,19 @@
       return true;
     }
 
-    // Turn around on the spot (standing pose only).
+    // Turn around on the spot (standing pose only). With the turn clip she
+    // turns round for real; its last frame is her standing pose mirrored, so
+    // flipping her facing as it ends shows exactly the same picture.
     async turnTo(dir) {
       if (dir === this.dir) return;
       this.player.showPose('stand');
+      const clip = this.manifest.clips.turn;
+      if (clip && clip.flipsFacing) {
+        await this.playClip('turn', { rate: this.config.turnClipRate });
+        this.dir = dir;
+        this.player.showPose('stand');
+        return;
+      }
       await this.player.turn({
         durationMs: this.config.turnMs,
         liftPx: this.config.turnLiftPx,

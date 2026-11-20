@@ -34,6 +34,13 @@ function validateManifest(m) {
     }
     if (!(Number.isFinite(clip.seconds) && clip.seconds > 0)) fail(`clip "${name}" needs seconds`);
   }
+  for (const [name, clip] of Object.entries(m.clips)) {
+    if (REQUIRED_CLIPS.includes(name)) continue; // checked above
+    if (!clip || typeof clip.file !== 'string' || !/^[\w.-]+\.webm$/.test(clip.file)) fail(`clip "${name}" needs a .webm file name`);
+    if (!POSES.includes(clip.startPose) || !POSES.includes(clip.endPose)) fail(`clip "${name}" needs startPose/endPose of "stand" or "sleep"`);
+    if (!(Number.isInteger(clip.frames) && clip.frames > 0)) fail(`clip "${name}" needs a frame count`);
+    if ('flipsFacing' in clip && typeof clip.flipsFacing !== 'boolean') fail(`clip "${name}": flipsFacing must be true or false`);
+  }
   if (!m.poses || typeof m.poses !== 'object') fail('"poses" is missing');
   for (const pose of POSES) {
     if (typeof m.poses[pose] !== 'string' || !/^[\w.-]+\.png$/.test(m.poses[pose])) {
