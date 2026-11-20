@@ -73,6 +73,8 @@
         onDragMove(event);
         return;
       }
+      // The mouse coming near her: she notices and looks up at you.
+      if (behaviour.isNear(event.clientX)) behaviour.notice();
       // Rubbing over her with no button held is petting.
       if (interactive && event.buttons === 0) {
         if (rub.move(event.clientX, event.timeStamp)) behaviour.pet();
@@ -196,7 +198,7 @@
     };
     if (queuedLayout && queuedLayout.seq > layout.seq) onLayout(queuedLayout);
     queuedLayout = null;
-    api.onCommand((name) => behaviour.command(name));
+    api.onCommand((cmd) => behaviour.command(cmd.name, cmd));
     api.onIdle((idle) => behaviour.setUserIdle(idle));
     api.onRunState((running) => behaviour.setRunning(running));
     if (tune) setupTune({ behaviour, el: document.getElementById('tune') });

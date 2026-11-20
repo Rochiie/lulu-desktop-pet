@@ -6,6 +6,12 @@ const { SIZE_OPTIONS } = require('./settings');
 
 function buildMenuTemplate(s, a) {
   const template = [
+    {
+      label: 'Come here',
+      accelerator: 'CommandOrControl+Alt+L',
+      registerAccelerator: false, // the key works everywhere via a global shortcut
+      click: () => a.comeHere(),
+    },
     { label: 'Walk', click: () => a.command('walk') },
     { label: 'Sit', click: () => a.command('sit') },
     { label: 'Nap', click: () => a.command('nap') },

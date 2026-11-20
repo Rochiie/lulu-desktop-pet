@@ -157,3 +157,26 @@ test('crossed and entryPosition put her just out of sight', () => {
   const enterLeft = L.entryPosition({ dir: -1, width: 1000, extents });
   assert.ok(enterLeft - extents.front > 1000);
 });
+
+const MOODS = require('./moods-fixture.js');
+
+test('moodAt picks the mood for the hour, wrapping past midnight', () => {
+  assert.equal(L.moodAt(7, MOODS).name, 'morning');
+  assert.equal(L.moodAt(12, MOODS).name, 'day');
+  assert.equal(L.moodAt(19, MOODS).name, 'evening');
+  assert.equal(L.moodAt(23, MOODS).name, 'night');
+  assert.equal(L.moodAt(3, MOODS).name, 'night');
+  assert.equal(L.moodAt(5, []).name, 'neutral');
+});
+
+test('applyMood multiplies only the listed actions', () => {
+  assert.deepEqual(L.applyMood({ walk: 10, nap: 2, look: 5 }, { weights: { nap: 3 } }), { walk: 10, nap: 6, look: 5 });
+});
+
+test('shouldEndWalk with a target stops at the closest cycle', () => {
+  const args = { range: { min: 0, max: 5000 }, aheadIsWall: true, remaining: 100, loopDist: 100, stopDist: 80, cyclesLeft: Infinity, wantStop: false };
+  // From 1000: stopping now lands at 1180, after one more cycle at 1280.
+  assert.equal(L.shouldEndWalk({ ...args, cx: 1000, dir: 1, target: 1200 }).end, true);
+  assert.equal(L.shouldEndWalk({ ...args, cx: 1000, dir: 1, target: 1260 }).end, false);
+  assert.equal(L.shouldEndWalk({ ...args, cx: 1000, dir: -1, target: 820 }).end, true);
+});

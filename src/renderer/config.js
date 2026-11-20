@@ -6,7 +6,23 @@
     // Standing still between actions.
     holdSeconds: [3, 8],
     // Weighted random action after a hold. Never the same non-walk action twice.
-    weights: Object.freeze({ walk: 40, look: 15, sniff: 15, sit: 12, stretch: 10, nap: 8 }),
+    // "look" (turning to look at you) is the most common thing she does
+    // besides walking.
+    weights: Object.freeze({ walk: 32, look: 30, sniff: 12, sit: 10, stretch: 8, nap: 8 }),
+
+    // Moods through the day. weights multiply the action weights above; hold
+    // and nap multiply how long she stands still and how long she naps.
+    moods: Object.freeze([
+      Object.freeze({ name: 'morning', from: 6, to: 11, weights: { walk: 1.3, stretch: 1.6, nap: 0.3 }, hold: 0.8, nap: 0.8 }),
+      Object.freeze({ name: 'day', from: 11, to: 18, weights: {}, hold: 1, nap: 1 }),
+      Object.freeze({ name: 'evening', from: 18, to: 22, weights: { walk: 0.7, sit: 1.3, nap: 2.5 }, hold: 1.3, nap: 1.5 }),
+      Object.freeze({ name: 'night', from: 22, to: 6, weights: { walk: 0.4, look: 0.6, sniff: 0.5, nap: 6 }, hold: 1.5, nap: 3 }),
+    ]),
+
+    // She notices the mouse coming near (within this many window pixels of
+    // her nose or tail, at Large) and looks up at you, at most once per cooldown.
+    noticeRadiusPx: 200,
+    noticeCooldownMs: 30 * 1000,
     walkLoops: [2, 6],
     napSeconds: [30, 120],
     // Share of walks that head off to the next screen (when there is one).

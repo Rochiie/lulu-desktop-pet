@@ -9,11 +9,14 @@
   const L = root.LuluLogic;
   const Interrupt = root.LuluInterrupt;
 
-  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake']);
+  const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
-    constructor({ player, manifest, config, api, extents, walkSpeed, tune, prepareLayout, rng = Math.random }) {
+    constructor({
+      player, manifest, config, api, extents, walkSpeed, tune, prepareLayout,
+      rng = Math.random, clock = () => new Date(),
+    }) {
       this.player = player;
       this.manifest = manifest;
       this.config = config;
@@ -22,6 +25,7 @@
       this.tune = tune;
       this.prepareLayout = prepareLayout; // resizes the canvas for a new layout
       this.rng = rng;
+      this.clock = clock;
       this.walkSpeed = this.clampSpeed(walkSpeed); // px/s at size 1.0
 
       this.layout = null;
@@ -38,6 +42,7 @@
       this.pending = null; // { type } waiting for the next safe point
       this.lastAction = null;
       this.lastPet = -Infinity;
+      this.lastNotice = -Infinity;
       this.walk = null; // the walk in progress
       this.crossing = false;
 
@@ -115,26 +120,36 @@
           break;
         case 'hop':
         case 'move':
-          this.relocated(layout.place);
+          this.relocated(layout.place, layout.comeX);
           break;
         default:
           throw new Error(`Unknown layout reason: ${layout.reason}`);
       }
     }
 
-    // She has been moved to another screen (fullscreen app, menu, tray).
-    relocated(place) {
+    // She has been moved to another screen (fullscreen app, menu, tray, or
+    // "Come here" pointing at another screen). 'enter-left'/'enter-right'
+    // put her just out of sight on that side, ready to walk in to comeX.
+    relocated(place, comeX) {
       this.interrupt();
       const r = this.range();
-      this.cx = place === 'random' ? L.randRange(this.rng, r.min, r.max) : (r.min + r.max) / 2;
+      if (place === 'enter-left' || place === 'enter-right') {
+        this.dir = place === 'enter-left' ? 1 : -1; // out of sight, so no turn is needed
+        this.cx = L.entryPosition({ dir: this.dir, width: this.layout.width, extents: this.extents() });
+        this.pending = { type: 'come', x: comeX };
+      } else if (place === 'random') {
+        this.cx = L.randRange(this.rng, r.min, r.max);
+      } else {
+        this.cx = (r.min + r.max) / 2;
+      }
       this.player.showPose(this.pose);
       this.savePosition();
     }
 
     // ------------------------------------------------------------ inputs
 
-    request(type) {
-      this.pending = { type };
+    request(type, extra = {}) {
+      this.pending = { ...extra, type };
       this.notify();
     }
 
@@ -142,9 +157,38 @@
       this.request('happy');
     }
 
-    command(name) {
+    command(name, args = {}) {
       if (!COMMANDS.has(name)) throw new Error(`Unknown command: ${name}`);
+      if (name === 'come') {
+        if (!Number.isFinite(args.x)) throw new Error('come needs an x position');
+        this.request('come', { x: args.x });
+        return;
+      }
       this.request(name);
+    }
+
+    // The mouse is near her: she looks up at you at the next natural break.
+    notice() {
+      if (this.dragging || this.pose === 'sleep' || this.pending) return;
+      if (this.walk && this.walk.target !== null) return; // already coming to you
+      const now = Date.now();
+      if (now - this.lastNotice < this.config.noticeCooldownMs) return;
+      this.lastNotice = now;
+      this.request('look');
+    }
+
+    // Is window x within noticeRadiusPx of her body (not her centre)?
+    isNear(x) {
+      if (!this.layout) return false;
+      const e = this.extents();
+      const left = this.dir > 0 ? this.cx - e.back : this.cx - e.front;
+      const right = this.dir > 0 ? this.cx + e.front : this.cx + e.back;
+      const reach = this.config.noticeRadiusPx * this.layout.scale;
+      return x >= left - reach && x <= right + reach;
+    }
+
+    mood() {
+      return L.moodAt(this.clock().getHours(), this.config.moods);
     }
 
     setUserIdle(idle) {
@@ -280,27 +324,33 @@
     // ------------------------------------------------------------ standing
 
     async standStep(req) {
-      this.clampIntoView();
+      // "Come here" may start her just out of sight; everything else starts on screen.
+      if (!(req && req.type === 'come')) this.clampIntoView();
       this.player.showPose('stand');
       if (req) {
-        await this.perform(req.type);
+        await this.perform(req.type, req);
         return;
       }
       if (this.userIdle) {
         await this.goToSleep(true);
         return;
       }
+      const mood = this.tune ? null : this.mood();
       const [lo, hi] = this.tune ? this.config.tuneHoldSeconds : this.config.holdSeconds;
-      const why = await this.wait(L.randRange(this.rng, lo, hi) * 1000);
+      const holdScale = mood ? mood.hold : 1;
+      const why = await this.wait(L.randRange(this.rng, lo, hi) * holdScale * 1000);
       if (why !== 'timeout') return; // a request or idle change: handle it next step
-      const weights = this.tune ? this.config.tuneWeights : this.config.weights;
+      const weights = this.tune ? this.config.tuneWeights : L.applyMood(this.config.weights, mood);
       await this.perform(L.pickAction(this.rng, weights, this.lastAction));
     }
 
-    async perform(type) {
+    async perform(type, req = {}) {
       switch (type) {
         case 'walk':
           if (await this.doWalk()) this.lastAction = 'walk';
+          return;
+        case 'come':
+          await this.comeTo(req.x);
           return;
         case 'nap':
           this.lastAction = 'nap';
@@ -328,7 +378,8 @@
     async goToSleep(untilUserReturns) {
       this.idleSleep = untilUserReturns;
       const [lo, hi] = this.config.napSeconds;
-      this.napEnds = Date.now() + L.randRange(this.rng, lo, hi) * 1000;
+      const napScale = this.tune ? 1 : this.mood().nap;
+      this.napEnds = Date.now() + L.randRange(this.rng, lo, hi) * napScale * 1000;
       await this.playClip('lie_down');
     }
 
@@ -345,7 +396,11 @@
       }
       if (this.userIdle) {
         this.idleSleep = true; // a nap turns into sleeping until the user is back
-      } else if (this.idleSleep || Date.now() >= this.napEnds) {
+      } else if (this.idleSleep) {
+        await this.wakeUp(); // you're back: wake up and look at you
+        if (!this.pending) this.pending = { type: 'look' };
+        return;
+      } else if (Date.now() >= this.napEnds) {
         await this.wakeUp();
         return;
       }
@@ -373,32 +428,54 @@
 
     // ------------------------------------------------------------ walking
 
-    async doWalk() {
+    // "Come here": walk to x (window pixels), then look up at you. If she is
+    // already close she just turns that way.
+    async comeTo(x) {
+      const r = this.range();
+      const target = L.clamp(x, r.min, r.max);
+      const D = this.distances();
+      const onScreen = this.cx >= r.min && this.cx <= r.max;
+      const distance = target - this.cx;
+      if (!onScreen || Math.abs(distance) >= D.start + D.stop) {
+        await this.doWalk({ target });
+      } else if (Math.abs(distance) > 1) {
+        await this.turnTo(Math.sign(distance));
+      }
+      this.lastAction = 'look';
+      await this.playClip('look');
+    }
+
+    async doWalk({ target = null } = {}) {
       const D = this.distances();
       const edges = this.layout.edges;
       const exits = ['left', 'right'].filter((side) => edges[side]);
       let trip = false;
       let dir;
-      if (exits.length > 0 && !this.tune && this.rng() < this.config.tripChance) {
-        trip = true;
-        dir = exits[Math.floor(this.rng() * exits.length)] === 'right' ? 1 : -1;
+      if (target !== null) {
+        dir = target >= this.cx ? 1 : -1;
       } else {
-        dir = L.chooseDirection(this.rng, this.cx - this.range().min, this.range().max - this.cx);
-      }
-      const fits = (d) => L.canStartWalk({
-        cx: this.cx, dir: d, range: this.range(), aheadIsWall: this.aheadIsWall(d),
-        startDist: D.start, loopDist: D.loop, stopDist: D.stop,
-      });
-      if (!fits(dir)) {
-        dir = -dir;
-        trip = false;
-        if (!fits(dir)) return false;
+        if (exits.length > 0 && !this.tune && this.rng() < this.config.tripChance) {
+          trip = true;
+          dir = exits[Math.floor(this.rng() * exits.length)] === 'right' ? 1 : -1;
+        } else {
+          dir = L.chooseDirection(this.rng, this.cx - this.range().min, this.range().max - this.cx);
+        }
+        const fits = (d) => L.canStartWalk({
+          cx: this.cx, dir: d, range: this.range(), aheadIsWall: this.aheadIsWall(d),
+          startDist: D.start, loopDist: D.loop, stopDist: D.stop,
+        });
+        if (!fits(dir)) {
+          dir = -dir;
+          trip = false;
+          if (!fits(dir)) return false;
+        }
       }
       await this.turnTo(dir); // turn only while standing
 
       const w = {
         trip,
-        cyclesLeft: L.randInt(this.rng, ...this.config.walkLoops),
+        target,
+        cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...this.config.walkLoops),
         hitWall: false,
         ending: false,
         loopT: 0,
@@ -463,7 +540,7 @@
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
         remaining: 0, loopDist: D.loop, stopDist: D.stop,
-        cyclesLeft: Infinity, wantStop: this.pending !== null,
+        cyclesLeft: Infinity, wantStop: this.pending !== null, target: this.walk.target,
       });
       if (r.hitWall) this.walk.hitWall = true;
       return r.end;
@@ -481,6 +558,7 @@
         remaining, loopDist: D.loop, stopDist: D.stop,
         cyclesLeft: w.trip ? Infinity : w.cyclesLeft,
         wantStop: this.pending !== null,
+        target: w.target,
       });
       if (r.end) {
         w.ending = true;

@@ -138,7 +138,9 @@ function makeLayout(seq, width, edges = { left: false, right: false }, reason = 
   return { seq, reason, width, height: 312, scale: 1, displayId: seq, edges };
 }
 
-function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null } = {}) {
+const NOON = () => new Date(2026, 0, 1, 12, 0, 0);
+
+function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cross = null, clock = NOON } = {}) {
   const player = new FakePlayer();
   const errors = [];
   const positions = [];
@@ -161,6 +163,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
     walkSpeed: manifest.walkSpeedPxPerSec,
     tune: false,
     prepareLayout: () => {},
+    clock,
   });
   behaviour.applyLayout(layout, { xFraction });
   behaviour.start();
@@ -313,4 +316,91 @@ test('if the next screen refuses, she turns back and stays on screen', async () 
   // After a refused crossing she walks back in; the hub then clamps if needed.
   await new Promise((r) => setTimeout(r, 20));
   assert.ok(t.positions.slice(1).every((p) => inRange(p) || p.cx > p.width));
+});
+
+const D_LOOP = manifest.walkSpeedPxPerSec * manifest.clips.walk_loop.seconds; // one walk cycle at scale 1
+
+test('"Come here" walks her to the spot, then she looks at you', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.2 });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.command('come', { x: 2200 });
+  await until(() => t.player.history.includes('walk_stop') && t.player.history.includes('look'));
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.ok(Math.abs(t.behaviour.cx - 2200) <= D_LOOP / 2 + 1, `stopped at ${t.behaviour.cx}, wanted ~2200`);
+  const h = t.player.history.join(' ');
+  assert.match(h, /walk_stop look/);
+});
+
+test('"Come here" when she is already close just turns and looks', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.5 });
+  await until(() => t.player.history.length >= 1);
+  const before = t.player.history.length;
+  t.behaviour.command('come', { x: 1450 }); // 50 px to her left
+  await t.player.next('look');
+  t.stop();
+  assert.equal(t.player.history.slice(before).includes('walk_start'), false);
+  assert.equal(t.behaviour.dir, -1);
+});
+
+test('"Come here" from another screen: she walks in from the side', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000) });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.applyLayout({ ...makeLayout(2, 2000), reason: 'move', place: 'enter-right', comeX: 1500 });
+  assert.ok(t.behaviour.cx > 2000, 'starts out of sight on the right');
+  await t.player.next('look');
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.ok(Math.abs(t.behaviour.cx - 1500) <= D_LOOP / 2 + 1, `stopped at ${t.behaviour.cx}`);
+  assert.equal(t.behaviour.dir, -1);
+});
+
+test('she notices the mouse and looks up, but not again within the cooldown', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.notice();
+  await t.player.next('look');
+  const looks = () => t.player.history.filter((c) => c === 'look').length;
+  t.behaviour.notice();
+  t.behaviour.notice();
+  await new Promise((r) => setTimeout(r, 200));
+  t.stop();
+  assert.equal(looks(), 1);
+});
+
+test('after you come back she wakes up and looks at you', async () => {
+  const t = setup({ config: { weights: { sit: 1, sniff: 1 } } });
+  await until(() => t.player.history.length >= 1);
+  t.behaviour.setUserIdle(true);
+  await t.player.next('sleep_loop');
+  t.behaviour.setUserIdle(false);
+  await t.player.next('wake_up');
+  await t.player.next('look');
+  t.stop();
+  assert.match(t.player.history.join(' '), /wake_up look/);
+});
+
+test('at night she naps far more than at midday', async () => {
+  const count = async (hour) => {
+    const t = setup({ config: { napSeconds: [0.001, 0.001] }, clock: () => new Date(2026, 0, 1, hour, 0, 0) });
+    await until(() => t.player.history.filter((c) => c === 'walk_start' || c === 'lie_down' || c === 'look' || c === 'sit' || c === 'sniff' || c === 'stretch').length >= 60, 20000);
+    t.stop();
+    return t.player.history.filter((c) => c === 'lie_down').length;
+  };
+  const noon = await count(12);
+  const night = await count(2);
+  assert.ok(night > noon * 2, `night naps ${night} vs noon ${noon}`);
+});
+
+test('"near" is measured from her body, either way she faces', () => {
+  const t = setup({ layout: makeLayout(1, 3000), xFraction: 0.5 });
+  t.stop();
+  const cx = t.behaviour.cx; // 1500; body 1300..1650 facing right (back 200, front 150)
+  t.behaviour.dir = 1;
+  assert.equal(t.behaviour.isNear(1650 + 190), true);
+  assert.equal(t.behaviour.isNear(1650 + 210), false);
+  assert.equal(t.behaviour.isNear(1300 - 190), true);
+  t.behaviour.dir = -1; // body 1350..1700
+  assert.equal(t.behaviour.isNear(1700 + 190), true);
+  assert.equal(cx, 1500);
 });

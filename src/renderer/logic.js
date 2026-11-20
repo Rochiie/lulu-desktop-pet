@@ -90,12 +90,36 @@
   //   aheadIsWall: true when there is no screen to walk onto in that direction
   // Never ends a walk where she would stop half off-screen; if the side ahead
   // leads to another screen she keeps going and crosses instead.
-  function shouldEndWalk({ cx, dir, range, aheadIsWall, remaining, loopDist, stopDist, cyclesLeft, wantStop }) {
+  //   target (optional): walking to a spot; end on whichever cycle stops
+  //   her closest to it.
+  function shouldEndWalk({ cx, dir, range, aheadIsWall, remaining, loopDist, stopDist, cyclesLeft, wantStop, target = null }) {
     const endIfLast = cx + dir * (remaining + stopDist);
     const endIfNext = endIfLast + dir * loopDist;
     if (aheadIsWall && beyondAhead(endIfNext, dir, range)) return { end: true, hitWall: true };
     if (!inRange(endIfLast, range)) return { end: false, hitWall: false };
-    return { end: cyclesLeft <= 1 || wantStop, hitWall: false };
+    const atTarget = target !== null && Math.abs(target - endIfLast) <= Math.abs(target - endIfNext);
+    return { end: cyclesLeft <= 1 || wantStop || atTarget, hitWall: false };
+  }
+
+  // The mood for an hour of the day (0-23). Each mood has from/to hours (to is
+  // exclusive and may wrap past midnight), weight multipliers per action, and
+  // multipliers for how long she holds still and how long she naps.
+  const NEUTRAL_MOOD = Object.freeze({ name: 'neutral', weights: {}, hold: 1, nap: 1 });
+
+  function moodAt(hour, moods) {
+    for (const m of moods) {
+      const inside = m.from <= m.to ? hour >= m.from && hour < m.to : hour >= m.from || hour < m.to;
+      if (inside) return m;
+    }
+    return NEUTRAL_MOOD;
+  }
+
+  function applyMood(weights, mood) {
+    const out = {};
+    for (const [action, w] of Object.entries(weights)) {
+      out[action] = w * (mood.weights[action] === undefined ? 1 : mood.weights[action]);
+    }
+    return out;
   }
 
   // Is there room to start a walk in this direction (start, one cycle, stop)?
@@ -163,6 +187,8 @@
   }
 
   return {
+    moodAt,
+    applyMood,
     createRubDetector,
     clamp,
     randRange,

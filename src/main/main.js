@@ -32,6 +32,7 @@ const DISPLAY_CHANGE_DEBOUNCE_MS = 250;
 const MAX_RENDERER_RESTARTS = 3;
 const RENDERER_RESTART_WINDOW_MS = 60 * 1000;
 const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake']);
+const COME_HERE_KEY = 'CommandOrControl+Alt+L';
 
 const state = {
   manifest: null,
@@ -228,6 +229,26 @@ function showByUser() {
   refreshVisibility();
 }
 
+// "Come here": she walks to where the mouse is. If the mouse is on another
+// screen, she moves to that screen and walks in from its nearer side.
+function comeHere() {
+  showByUser();
+  const point = screen.getCursorScreenPoint();
+  const target = screen.getDisplayNearestPoint(point);
+  const displays = snapshotDisplays();
+  const cur = currentDisplay(displays);
+  const targetBlocked = state.settings.get().avoidFullscreen && state.busy.has(target.id);
+  if (target.id !== cur.id && !targetBlocked) {
+    const x = point.x - target.workArea.x;
+    const place = x < target.workArea.width / 2 ? 'enter-left' : 'enter-right';
+    log.info(`Come here: Lulu moves to screen ${target.id}`);
+    relocate(target.id, 'move', { place, comeX: x });
+    return;
+  }
+  // Same screen (or the mouse's screen is fullscreen): walk as close as she can.
+  send('lulu:command', { name: 'come', x: point.x - cur.workArea.x });
+}
+
 function bringBackToCentre() {
   showByUser();
   const primary = screen.getPrimaryDisplay();
@@ -361,8 +382,9 @@ function setStartWithWindows(on) {
 const menuActions = {
   command: (name) => {
     if (!COMMANDS.has(name)) throw new Error(`Unknown command ${name}`);
-    send('lulu:command', name);
+    send('lulu:command', { name });
   },
+  comeHere: () => comeHere(),
   setSize,
   moveToDisplay: (id) => {
     showByUser();
@@ -573,6 +595,9 @@ async function start() {
 
   createTray();
   state.updater = createUpdater({ app, log, onChange: refreshTray, notify });
+  if (!globalShortcut.register(COME_HERE_KEY, comeHere)) {
+    log.warn(`Could not register ${COME_HERE_KEY} for "Come here" (another app may own it)`);
+  }
   watchDisplays();
   watchPower();
   startPolling();
