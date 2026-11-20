@@ -65,11 +65,11 @@
 
   // extents: how far her body reaches behind (back) and in front of (front)
   // her centre point, in window pixels. Returns the range of centre positions
-  // that keep her whole body on screen while facing `dir` (1 right, -1 left).
-  function walkRange(width, extents, dir, margin) {
-    const back = extents.back + margin;
-    const front = extents.front + margin;
-    const range = dir > 0 ? { min: back, max: width - front } : { min: front, max: width - back };
+  // that keep her whole body on screen facing either way, so turning around
+  // at an edge never swings her longer half off the screen.
+  function walkRange(width, extents, margin) {
+    const reach = Math.max(extents.back, extents.front) + margin;
+    const range = { min: reach, max: width - reach };
     if (range.min > range.max) {
       const mid = width / 2;
       return { min: mid, max: mid };

@@ -65,13 +65,12 @@ test('rampDistance rejects unknown phases', () => {
 
 const extents = { back: 200, front: 150 };
 
-test('walkRange depends on facing', () => {
-  assert.deepEqual(L.walkRange(1000, extents, 1, 10), { min: 210, max: 840 });
-  assert.deepEqual(L.walkRange(1000, extents, -1, 10), { min: 160, max: 790 });
+test('walkRange leaves room to turn around at either edge', () => {
+  assert.deepEqual(L.walkRange(1000, extents, 10), { min: 210, max: 790 });
 });
 
 test('walkRange on a tiny screen collapses to the middle', () => {
-  assert.deepEqual(L.walkRange(100, extents, 1, 0), { min: 50, max: 50 });
+  assert.deepEqual(L.walkRange(100, extents, 0), { min: 50, max: 50 });
 });
 
 const base = { range: { min: 200, max: 800 }, loopDist: 100, stopDist: 80, remaining: 100 };

@@ -83,6 +83,15 @@ test('settings survive a corrupt file and save atomically', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('settings files saved with a byte-order mark still load', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lulu-settings-'));
+  const file = path.join(dir, 'settings.json');
+  fs.writeFileSync(file, '﻿{"size": 1.0}');
+  const s = new Settings(file, { warn(msg) { throw new Error(msg); }, error() {} });
+  assert.equal(s.load().size, 1.0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('the real manifest is valid', () => {
   const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
   assert.equal(validateManifest(m), m);

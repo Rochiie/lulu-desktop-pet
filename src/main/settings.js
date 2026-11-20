@@ -66,7 +66,8 @@ class Settings {
       return this.values;
     }
     try {
-      this.values = sanitize(JSON.parse(text));
+      // Editors such as Notepad may add a byte-order mark; JSON.parse rejects it.
+      this.values = sanitize(JSON.parse(text.replace(/^﻿/, '')));
     } catch (err) {
       this.log.warn('Settings file is corrupt; using defaults', err);
       this.values = { ...DEFAULTS };

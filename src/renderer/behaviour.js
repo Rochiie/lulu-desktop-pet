@@ -56,8 +56,8 @@
       return { back: this.clipExtents.back * s, front: this.clipExtents.front * s };
     }
 
-    range(dir = this.dir) {
-      return L.walkRange(this.layout.width, this.extents(), dir, this.config.edgeMarginPx);
+    range() {
+      return L.walkRange(this.layout.width, this.extents(), this.config.edgeMarginPx);
     }
 
     clampIntoView() {
@@ -368,10 +368,10 @@
         trip = true;
         dir = exits[Math.floor(this.rng() * exits.length)] === 'right' ? 1 : -1;
       } else {
-        dir = L.chooseDirection(this.rng, this.cx - this.range(-1).min, this.range(1).max - this.cx);
+        dir = L.chooseDirection(this.rng, this.cx - this.range().min, this.range().max - this.cx);
       }
       const fits = (d) => L.canStartWalk({
-        cx: this.cx, dir: d, range: this.range(d), aheadIsWall: this.aheadIsWall(d),
+        cx: this.cx, dir: d, range: this.range(), aheadIsWall: this.aheadIsWall(d),
         startDist: D.start, loopDist: D.loop, stopDist: D.stop,
       });
       if (!fits(dir)) {
