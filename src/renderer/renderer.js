@@ -116,20 +116,20 @@
 
   function setupTune({ behaviour, el }) {
     const render = () => {
-      el.textContent = `Tune mode · walk speed ${behaviour.walkSpeed} px/s (at Large) · `
-        + 'Ctrl+Alt+= faster · Ctrl+Alt+- slower · Ctrl+Alt+W walk · Ctrl+Alt+S save';
+      el.textContent = `Tune mode · walk pace ${Math.round(behaviour.pace * 100)}% · `
+        + 'Ctrl+Alt+= faster · Ctrl+Alt+- slower · Ctrl+Alt+W walk · Ctrl+Alt+T treat · Ctrl+Alt+F follow · Ctrl+Alt+S save';
     };
     el.hidden = false;
     render();
     api.onTune((msg) => {
       if (msg.delta) {
-        behaviour.setWalkSpeed(behaviour.walkSpeed + msg.delta);
+        behaviour.setPace(behaviour.pace + msg.delta);
         render();
       } else if (msg.walk) {
         behaviour.command('walk');
       } else if (msg.save) {
-        api.saveWalkSpeed(behaviour.walkSpeed);
-        el.textContent = `Saved: walk speed ${behaviour.walkSpeed} px/s`;
+        api.saveWalkPace(behaviour.pace);
+        el.textContent = `Saved: walk pace ${Math.round(behaviour.pace * 100)}%`;
         setTimeout(render, 2000);
       }
     });

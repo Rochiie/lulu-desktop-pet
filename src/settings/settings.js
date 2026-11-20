@@ -5,7 +5,7 @@
 
   const api = window.luluSettings;
   const $ = (id) => document.getElementById(id);
-  const SLIDERS = ['lookMultiplier', 'moodStrength', 'walkSpeed', 'tripChance', 'followSeconds'];
+  const SLIDERS = ['lookMultiplier', 'moodStrength', 'walkPace', 'tripChance', 'followSeconds'];
   const SWITCHES = ['noticeMouse', 'walkBetweenScreens', 'walkIn', 'avoidFullscreen', 'startWithWindows'];
   const SEND_DELAY_MS = 120;
 
@@ -16,7 +16,7 @@
   const format = {
     lookMultiplier: (v) => (v === 1 ? 'Normal' : `${v}×`),
     moodStrength: (v) => (v === 0 ? 'Off' : `${Math.round(v * 100)}%`),
-    walkSpeed: (v) => `${v} px/s`,
+    walkPace: (v) => (Math.abs(v - 1) < 0.001 ? 'Normal' : `${Math.round(v * 100)}%`),
     tripChance: (v) => (v === 0 ? 'Never' : `${Math.round(v * 100)}% of walks`),
     followSeconds: (v) => (v < 60 ? `${v} s` : `${Math.floor(v / 60)} min${v % 60 ? ` ${v % 60} s` : ''}`),
   };
@@ -26,7 +26,6 @@
   }
 
   function effective(key) {
-    if (key === 'walkSpeed') return view.values.walkSpeed === null ? view.meta.manifestWalkSpeed : view.values.walkSpeed;
     return view.values[key];
   }
 
@@ -50,7 +49,6 @@
     const tripsOff = !meta.multipleScreens || !values.walkBetweenScreens;
     $('tripChance').disabled = tripsOff;
     document.querySelector('[data-needs="walkBetweenScreens"]').dataset.disabled = String(tripsOff);
-    $('walkSpeedReset').hidden = values.walkSpeed === null;
   }
 
   async function flush() {
@@ -87,7 +85,6 @@
     for (const key of SWITCHES) {
       $(key).addEventListener('change', () => queue({ [key]: $(key).checked }));
     }
-    $('walkSpeedReset').addEventListener('click', () => queue({ walkSpeed: null }));
     $('reset').addEventListener('click', async () => {
       clearTimeout(sendTimer);
       pending = {};

@@ -7,6 +7,8 @@
   'use strict';
 
   const L = root.LuluLogic;
+  const RM = root.LuluRootMotion;
+  const WALK_CLIPS = Object.freeze({ start: 'walk_start', loop: 'walk_loop', stop: 'walk_stop' });
   const Interrupt = root.LuluInterrupt;
 
   const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat']);
@@ -27,7 +29,7 @@
       this.rng = rng;
       this.clock = clock;
       this.prefs = prefs;
-      this.walkSpeed = this.clampSpeed(prefs.walkSpeed); // px/s at size 1.0
+      this.pace = this.clampPace(prefs.walkPace); // walk playback speed, 1 = as animated
 
       this.layout = null;
       this.cx = 0; // her centre, in window pixels
@@ -74,16 +76,13 @@
       this.cx = L.clamp(this.cx, r.min, r.max);
     }
 
-    vmax() {
-      return this.walkSpeed * this.layout.scale;
-    }
-
+    // How far each walk clip carries her, in window pixels.
     distances() {
-      const v = this.vmax();
+      const s = this.layout.scale;
       return {
-        start: L.phaseDistance('start', v, this.player.duration('walk_start')),
-        loop: L.phaseDistance('loop', v, this.player.duration('walk_loop')),
-        stop: L.phaseDistance('stop', v, this.player.duration('walk_stop')),
+        start: L.clipDistance(RM.start) * s,
+        loop: L.clipDistance(RM.loop) * s,
+        stop: L.clipDistance(RM.stop) * s,
       };
     }
 
@@ -91,19 +90,19 @@
       return !this.layout.edges[dir > 0 ? 'right' : 'left'];
     }
 
-    clampSpeed(speed) {
-      const [lo, hi] = this.config.walkSpeedRange;
-      return L.clamp(Math.round(speed), lo, hi);
+    clampPace(pace) {
+      const [lo, hi] = this.config.walkPaceRange;
+      return L.clamp(Math.round(pace * 100) / 100, lo, hi);
     }
 
-    setWalkSpeed(speed) {
-      this.walkSpeed = this.clampSpeed(speed);
+    setPace(pace) {
+      this.pace = this.clampPace(pace);
     }
 
     // Preferences from the Settings window, applied live.
     setPrefs(prefs) {
       this.prefs = prefs;
-      this.walkSpeed = this.clampSpeed(prefs.walkSpeed);
+      this.pace = this.clampPace(prefs.walkPace);
     }
 
     // Body edges in window pixels: [left, right].
@@ -638,19 +637,21 @@
         cyclesLeft: target !== null ? Infinity : L.randInt(this.rng, ...this.config.walkLoops),
         hitWall: false,
         ending: false,
-        loopT: 0,
+        loopIndex: -1,
       };
       this.walk = w;
       try {
-        await this.playClip('walk_start', { onFrame: (f) => this.walkFrame('start', f) });
+        await this.playClip('walk_start', { rate: this.pace, onFrame: (f) => this.walkFrame('start', f) });
         if (!this.stopRightAfterStart()) {
-          const looping = this.playClip('walk_loop', { loop: true, onFrame: (f) => this.walkFrame('loop', f) });
+          const looping = this.playClip('walk_loop', {
+            loop: true, rate: this.pace, onFrame: (f) => this.walkFrame('loop', f),
+          });
           this.onNotify = () => this.reconsiderWalk(null);
-          this.reconsiderWalk(0);
+          this.reconsiderWalk(-1);
           await looping;
           this.onNotify = null;
         }
-        await this.playClip('walk_stop', { onFrame: (f) => this.walkFrame('stop', f) });
+        await this.playClip('walk_stop', { rate: this.pace, onFrame: (f) => this.walkFrame('stop', f) });
       } finally {
         this.walk = null;
         this.onNotify = null;
@@ -678,17 +679,15 @@
     // Move her by exactly the distance the animation covered since the last
     // frame, so her feet stay planted.
     walkFrame(phase, f) {
-      const v = this.vmax();
-      const T = f.duration;
-      const d = f.wrapped
-        ? L.rampDistance(phase, v, T, f.prevT, T) + L.rampDistance(phase, v, T, 0, f.t)
-        : L.rampDistance(phase, v, T, f.prevT, f.t);
-      this.cx += this.dir * d;
+      const dx = RM[phase];
+      if (dx.length !== f.frames) throw new Error(`Root motion for ${WALK_CLIPS[phase]} has ${dx.length} entries, clip has ${f.frames} frames`);
+      const d = L.stepDistance(dx, f.prevIndex, f.index, f.wrapped);
+      this.cx += this.dir * d * this.layout.scale;
       if (phase !== 'loop' || !this.walk) return;
-      this.walk.loopT = f.t;
+      this.walk.loopIndex = f.index;
       if (f.wrapped) {
         this.walk.cyclesLeft -= 1;
-        this.reconsiderWalk(f.t);
+        this.reconsiderWalk(f.index);
       }
       this.checkCrossing();
     }
@@ -707,12 +706,12 @@
     }
 
     // Called at the start of each walk cycle and whenever a request arrives.
-    reconsiderWalk(t) {
+    // index: the walk_loop frame just shown (-1 before the first); null = latest.
+    reconsiderWalk(index) {
       const w = this.walk;
       if (!w || w.ending) return;
       const D = this.distances();
-      const T = this.player.duration('walk_loop');
-      const remaining = L.rampDistance('loop', this.vmax(), T, t === null ? w.loopT : t, T);
+      const remaining = L.remainingDistance(RM.loop, index === null ? w.loopIndex : index) * this.layout.scale;
       const r = L.shouldEndWalk({
         cx: this.cx, dir: this.dir, range: this.range(), aheadIsWall: this.aheadIsWall(),
         remaining, loopDist: D.loop, stopDist: D.stop,

@@ -409,7 +409,7 @@ function startPolling() {
 // ---------------------------------------------------------------- settings actions
 
 function sendPrefs() {
-  send('lulu:prefs', prefsFor(state.settings.get(), state.manifest));
+  send('lulu:prefs', prefsFor(state.settings.get()));
 }
 
 // Apply a change from the menu or the Settings window, with its side effects.
@@ -484,7 +484,6 @@ function settingsView() {
       canStartWithWindows: app.isPackaged,
       fullscreenAvailable: state.detector !== null,
       multipleScreens: screen.getAllDisplays().length > 1,
-      manifestWalkSpeed: state.manifest.walkSpeedPxPerSec,
       version: app.getVersion(),
     },
   };
@@ -568,8 +567,8 @@ function refreshTray() {
 
 function registerTuneShortcuts() {
   const keys = {
-    'CommandOrControl+Alt+=': { delta: 5 },
-    'CommandOrControl+Alt+-': { delta: -5 },
+    'CommandOrControl+Alt+=': { delta: 0.05 },
+    'CommandOrControl+Alt+-': { delta: -0.05 },
     'CommandOrControl+Alt+W': { walk: true },
     'CommandOrControl+Alt+S': { save: true },
   };
@@ -617,7 +616,7 @@ function registerIpc() {
     return {
       manifest: state.manifest,
       settings: { xFraction: s.xFraction },
-      prefs: prefsFor(s, state.manifest),
+      prefs: prefsFor(s),
       layout,
       tune: TUNE,
     };
@@ -687,13 +686,13 @@ function registerIpc() {
     state.settings.update({ xFraction, displayId: state.displayId });
   });
 
-  on('lulu:save-walk-speed', (speed) => {
-    if (!TUNE) throw new Error('Walk speed can only be saved in tune mode');
-    if (!Number.isFinite(speed)) throw new TypeError('speed must be a number');
-    state.settings.update({ walkSpeed: speed });
+  on('lulu:save-walk-pace', (pace) => {
+    if (!TUNE) throw new Error('Walk pace can only be saved in tune mode');
+    if (!Number.isFinite(pace)) throw new TypeError('pace must be a number');
+    state.settings.update({ walkPace: pace });
     state.settings.flush();
     sendPrefs();
-    log.info(`Walk speed saved: ${speed} px/s at size 1.0`);
+    log.info(`Walk pace saved: ${pace}`);
   });
 
   on('lulu:error', (message) => log.error(`Renderer: ${String(message).slice(0, 4000)}`));

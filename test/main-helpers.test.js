@@ -57,12 +57,12 @@ test('menu labels run left to right and mark the main screen', () => {
 test('settings sanitize rejects bad values', () => {
   assert.deepEqual(sanitize(null), DEFAULTS);
   assert.deepEqual(sanitize([1, 2]), DEFAULTS);
-  const s = sanitize({ size: 0.7, xFraction: 4, walkSpeed: 5000, avoidFullscreen: 'yes', displayId: 1.5 });
+  const s = sanitize({ size: 0.7, xFraction: 4, walkPace: 5000, avoidFullscreen: 'yes', displayId: 1.5 });
   assert.deepEqual(s, DEFAULTS);
-  const good = sanitize({ size: 1.0, xFraction: 0.25, walkSpeed: 110, avoidFullscreen: false, displayId: 2528732444 });
+  const good = sanitize({ size: 1.0, xFraction: 0.25, walkPace: 0.9, avoidFullscreen: false, displayId: 2528732444 });
   assert.equal(good.size, 1.0);
   assert.equal(good.xFraction, 0.25);
-  assert.equal(good.walkSpeed, 110);
+  assert.equal(good.walkPace, 0.9);
   assert.equal(good.avoidFullscreen, false);
   assert.equal(good.displayId, 2528732444);
 });
@@ -114,7 +114,9 @@ test('new preferences have safe ranges and defaults', () => {
   assert.equal(bad.walkIn, true);
   const good = sanitize({ tripChance: 0, lookMultiplier: 1.5, moodStrength: 0.3, followSeconds: 90.4, noticeMouse: false, walkIn: false });
   assert.deepEqual([good.tripChance, good.lookMultiplier, good.moodStrength, good.followSeconds, good.noticeMouse, good.walkIn], [0, 1.5, 0.3, 90, false, false]);
-  const p = prefsFor({ ...DEFAULTS }, { walkSpeedPxPerSec: 125 });
-  assert.equal(p.walkSpeed, 125);
-  assert.equal(prefsFor({ ...DEFAULTS, walkSpeed: 110 }, { walkSpeedPxPerSec: 125 }).walkSpeed, 110);
+  assert.equal(prefsFor({ ...DEFAULTS }).walkPace, 1);
+  assert.equal(sanitize({ walkPace: 1.2 }).walkPace, 1.2);
+  assert.equal(sanitize({ walkPace: 3 }).walkPace, 1);
+  // Old settings files with the retired px/s walkSpeed still load cleanly.
+  assert.equal('walkSpeed' in sanitize({ walkSpeed: 110 }), false);
 });

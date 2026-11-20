@@ -36,7 +36,9 @@
     treatNoseReach: 223,
     treatEatFrom: 1.6,
     treatEatTo: 2.7,
-    walkLoops: [2, 6],
+    // Walk cycles per walk. Her real stride is long (about 322 px per cycle
+    // at Large), so a few cycles already cover a good stretch of screen.
+    walkLoops: [1, 3],
     napSeconds: [30, 120],
     // Share of walks that head off to the next screen (when there is one).
     tripChance: 0.25,
@@ -70,6 +72,6 @@
     // Tune mode (npm run tune).
     tuneHoldSeconds: [1, 2],
     tuneWeights: Object.freeze({ walk: 1 }),
-    walkSpeedRange: [20, 400],
+    walkPaceRange: [0.7, 1.3],
   });
 })(self);

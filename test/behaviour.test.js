@@ -18,6 +18,7 @@ class Interrupt extends Error {
 }
 globalThis.LuluInterrupt = Interrupt;
 globalThis.LuluLogic = require('../src/renderer/logic.js');
+require('../src/renderer/root-motion.js');
 require('../src/renderer/config.js');
 require('../src/renderer/behaviour.js');
 const L = globalThis.LuluLogic;
@@ -30,10 +31,7 @@ class FakePlayer {
     this.active = null;
     this.history = [];
     this.listeners = [];
-  }
-
-  duration(name) {
-    return manifest.clips[name].seconds;
+    this.rates = [];
   }
 
   get playing() {
@@ -90,35 +88,35 @@ class FakePlayer {
     if (this.active) this.finish(this.active, new Interrupt());
   }
 
-  play(name, { loop = false, onFrame = null } = {}) {
+  play(name, { loop = false, onFrame = null, rate = 1 } = {}) {
     if (this.active) return Promise.reject(new Error(`play ${name} while ${this.active.name} plays`));
     if (this.turning) return Promise.reject(new Error(`play ${name} while turning`));
     this.history.push(name);
     this.listeners.forEach((fn) => fn(name));
-    const T = manifest.clips[name].seconds;
+    this.rates.push(rate);
+    const frames = manifest.clips[name].frames;
     return new Promise((resolve, reject) => {
-      const a = { name, loop, resolve, reject, done: false, t: 0 };
+      const a = { name, loop, resolve, reject, done: false, index: -1 };
       this.active = a;
       const tick = () => {
         if (a.done) return;
-        let next = a.t + 1 / 24;
+        let next = a.index + 1;
         let wrapped = false;
-        try {
-          if (next >= T - 1e-9) {
-            if (!a.loop) {
-              if (onFrame) onFrame({ prevT: a.t, t: T, wrapped: false, duration: T });
-              this.finish(a, null);
-              return;
-            }
-            next -= T;
-            wrapped = true;
+        if (next >= frames) {
+          if (!a.loop) {
+            this.finish(a, null);
+            return;
           }
-          if (onFrame) onFrame({ prevT: a.t, t: next, wrapped, duration: T });
+          next = 0;
+          wrapped = true;
+        }
+        try {
+          if (onFrame) onFrame({ prevIndex: a.index, index: next, wrapped, frames });
         } catch (err) {
           this.finish(a, err);
           return;
         }
-        a.t = next;
+        a.index = next;
         setImmediate(tick);
       };
       setImmediate(tick);
@@ -152,7 +150,7 @@ function makeLayout(seq, width, edges = { left: false, right: false }, reason = 
 
 const NOON = () => new Date(2026, 0, 1, 12, 0, 0);
 const PREFS = {
-  walkSpeed: manifest.walkSpeedPxPerSec, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
+  walkPace: 1, tripChance: 0.25, lookMultiplier: 1, moodStrength: 1,
   followSeconds: 60, noticeMouse: true, walkIn: true,
 };
 
@@ -336,7 +334,8 @@ test('if the next screen refuses, she turns back and stays on screen', async () 
   assert.ok(t.positions.slice(1).every((p) => inRange(p) || p.cx > p.width));
 });
 
-const D_LOOP = manifest.walkSpeedPxPerSec * manifest.clips.walk_loop.seconds; // one walk cycle at scale 1
+const RM = globalThis.LuluRootMotion;
+const D_LOOP = globalThis.LuluLogic.clipDistance(RM.loop); // one walk cycle at scale 1
 
 test('"Come here" walks her to the spot, then she looks at you', async () => {
   const t = setup({ config: { weights: { sit: 1, sniff: 1 } }, layout: makeLayout(1, 3000), xFraction: 0.2 });
@@ -400,7 +399,7 @@ test('after you come back she wakes up and looks at you', async () => {
 
 test('at night she naps far more than at midday', async () => {
   const count = async (hour) => {
-    const t = setup({ config: { napSeconds: [0.001, 0.001] }, clock: () => new Date(2026, 0, 1, hour, 0, 0) });
+    const t = setup({ config: { napSeconds: [0.001, 0.001] }, layout: makeLayout(1, 4000), clock: () => new Date(2026, 0, 1, hour, 0, 0) });
     await until(() => t.player.history.filter((c) => c === 'walk_start' || c === 'lie_down' || c === 'look' || c === 'sit' || c === 'sniff' || c === 'stretch').length >= 60, 20000);
     t.stop();
     return t.player.history.filter((c) => c === 'lie_down').length;
@@ -518,8 +517,10 @@ test('preferences: looks at you more, and moods can be turned off', () => {
   const w = t.behaviour.weightsFor(t.behaviour.mood());
   assert.equal(w.look, globalThis.LuluConfig.weights.look * 2);
   assert.equal(w.nap, globalThis.LuluConfig.weights.nap); // night has no effect at strength 0
-  t.behaviour.setPrefs({ ...PREFS, walkSpeed: 100 });
-  assert.equal(t.behaviour.walkSpeed, 100);
+  t.behaviour.setPrefs({ ...PREFS, walkPace: 1.2 });
+  assert.equal(t.behaviour.pace, 1.2);
+  t.behaviour.setPrefs({ ...PREFS, walkPace: 9 });
+  assert.equal(t.behaviour.pace, 1.3); // clamped
 });
 
 test('noticing can be switched off', async () => {

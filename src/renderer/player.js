@@ -11,6 +11,8 @@
   const LOAD_TIMEOUT_MS = 20000;
   const HAVE_CURRENT_DATA = 2;
   const BONE_DROP_MS = 700;
+  // The next clip needs a few ms to show its first frame; start it this much early.
+  const HANDOVER_LEAD_MS = 6;
 
   // 0..1 -> 0..1 with a couple of small bounces at the end.
   function easeOutBounce(t) {
@@ -176,14 +178,6 @@
       return { back: standingCenterX - minX, front: maxX + 1 - standingCenterX };
     }
 
-    duration(name) {
-      const video = this.videos.get(name);
-      if (!video) throw new Error(`Unknown clip ${name}`);
-      return Number.isFinite(video.duration) && video.duration > 0
-        ? video.duration
-        : this.manifest.clips[name].seconds;
-    }
-
     get playing() {
       return this.active ? this.active.name : null;
     }
@@ -210,9 +204,11 @@
 
     // Plays a clip to its end. Resolves when it ends, rejects with Interrupt
     // if stop() is called. With loop: true it repeats until endLoop().
-    // onFrame({ prevT, t, wrapped, duration }) runs for every new frame,
-    // before it is drawn, so movement stays locked to the animation.
-    play(name, { loop = false, onFrame = null } = {}) {
+    // rate plays it faster or slower (legs and movement together).
+    // onFrame({ prevIndex, index, wrapped, frames }) runs for every new frame,
+    // before it is drawn, so movement stays locked to the animation. prevIndex
+    // is -1 before the clip's first frame.
+    play(name, { loop = false, onFrame = null, rate = 1 } = {}) {
       if (this.active) {
         return Promise.reject(new Error(`Cannot play ${name}: ${this.active.name} is still playing`));
       }
@@ -220,12 +216,17 @@
       const video = this.videos.get(name);
       if (!video) return Promise.reject(new Error(`Unknown clip ${name}`));
       return new Promise((resolve, reject) => {
-        const a = { name, video, onFrame, resolve, reject, lastT: 0, callbackId: null, done: false };
+        const a = {
+          name, video, onFrame, resolve, reject, rate,
+          frames: this.manifest.clips[name].frames,
+          lastIndex: -1, lastShownAt: 0, callbackId: null, done: false,
+        };
         a.onEnded = () => this._ended(a);
         a.onError = () => this._finish(a, new Error(`Playback of ${name} failed (${mediaErrorText(video)})`));
         video.addEventListener('ended', a.onEnded);
         video.addEventListener('error', a.onError);
         video.loop = loop;
+        video.playbackRate = rate;
         this.active = a;
         this._schedule(a);
         video.play().catch((err) => {
@@ -362,9 +363,9 @@
 
     _schedule(a) {
       if (this.useFrameCallback) {
-        a.callbackId = a.video.requestVideoFrameCallback((_now, meta) => this._frame(a, meta.mediaTime));
+        a.callbackId = a.video.requestVideoFrameCallback((now, meta) => this._frame(a, meta.mediaTime, now));
       } else {
-        a.callbackId = requestAnimationFrame(() => this._frame(a, a.video.currentTime));
+        a.callbackId = requestAnimationFrame((now) => this._frame(a, a.video.currentTime, now));
       }
     }
 
@@ -375,15 +376,16 @@
       a.callbackId = null;
     }
 
-    _frame(a, t) {
+    _frame(a, mediaTime, now) {
       a.callbackId = null;
       if (a.done) return;
-      const prevT = a.lastT;
-      const wrapped = t + 1e-4 < prevT;
-      if (t !== prevT || wrapped) {
-        a.lastT = t;
+      const index = Math.min(a.frames - 1, Math.max(0, Math.round(mediaTime * this.manifest.fps)));
+      if (index !== a.lastIndex) {
+        const wrapped = a.lastIndex !== -1 && index < a.lastIndex;
         try {
-          if (a.onFrame) a.onFrame({ prevT, t, wrapped, duration: this.duration(a.name) });
+          if (a.onFrame) a.onFrame({ prevIndex: a.lastIndex, index, wrapped, frames: a.frames });
+          a.lastIndex = index;
+          a.lastShownAt = now;
           this.source = a.video;
           this.draw();
         } catch (err) {
@@ -396,17 +398,26 @@
 
     _ended(a) {
       if (a.done) return;
-      const duration = this.duration(a.name);
       try {
-        // Account for any movement in the final frame interval.
-        if (a.onFrame && a.lastT < duration) a.onFrame({ prevT: a.lastT, t: duration, wrapped: false, duration });
+        // Account for the final frame if it was never reported.
+        if (a.onFrame && a.lastIndex < a.frames - 1) {
+          a.onFrame({ prevIndex: a.lastIndex, index: a.frames - 1, wrapped: false, frames: a.frames });
+          a.lastIndex = a.frames - 1;
+          a.lastShownAt = performance.now();
+        }
         this.source = a.video;
         this.draw();
       } catch (err) {
         this._finish(a, err);
         return;
       }
-      this._finish(a, null);
+      // 'ended' can arrive just as the last frame appears; keep that frame on
+      // screen for its full time before the next clip starts, so the hand-over
+      // has no short frame (a visible hitch).
+      const frameMs = 1000 / this.manifest.fps / a.rate;
+      const wait = a.lastShownAt + frameMs - HANDOVER_LEAD_MS - performance.now();
+      if (wait > 0) setTimeout(() => this._finish(a, null), wait);
+      else this._finish(a, null);
     }
 
     _finish(a, err) {
@@ -422,6 +433,7 @@
       this.source = this.poses.get(err ? clip.startPose : clip.endPose);
       a.video.pause();
       a.video.loop = false;
+      a.video.playbackRate = 1;
       a.video.currentTime = 0; // park it at the start, ready for next time
       if (err) a.reject(err);
       else a.resolve();

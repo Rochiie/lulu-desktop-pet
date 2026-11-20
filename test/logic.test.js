@@ -38,29 +38,30 @@ test('randInt is inclusive and stays in range', () => {
   assert.equal(L.randInt(() => 0.999999, 2, 6), 6);
 });
 
-test('ramp distances: start and stop cover half of full speed', () => {
-  assert.equal(L.phaseDistance('start', 100, 1.5), 75);
-  assert.equal(L.phaseDistance('loop', 100, 1.5), 150);
-  assert.ok(Math.abs(L.phaseDistance('stop', 100, 2.458) - 122.9) < 1e-9);
+test('stepDistance adds up the frames shown, including across a loop wrap', () => {
+  const dx = [5, 1, 2, 3];
+  assert.equal(L.stepDistance(dx, -1, 0, false), 5); // the first frame
+  assert.equal(L.stepDistance(dx, 0, 2, false), 3); // a skipped frame still counts
+  assert.equal(L.stepDistance(dx, 2, 1, true, 7), 3 + 7 + 1); // wrap: 3, then new cycle's 0 and 1
+  assert.equal(L.remainingDistance(dx, 1), 5);
+  assert.equal(L.remainingDistance(dx, -1), 11);
+  assert.equal(L.clipDistance(dx), 11);
+  assert.equal(L.clipDistance(dx, 7), 13);
 });
 
-test('ramp distances add up across frames', () => {
-  const T = 2.458;
-  let sum = 0;
-  for (let f = 0; f < 59; f += 1) sum += L.rampDistance('stop', 125, T, (f * T) / 59, ((f + 1) * T) / 59);
-  assert.ok(Math.abs(sum - L.phaseDistance('stop', 125, T)) < 1e-9);
-});
-
-test('ramp start speed rises, stop speed falls', () => {
-  const T = 1;
-  const early = L.rampDistance('start', 100, T, 0, 0.1);
-  const late = L.rampDistance('start', 100, T, 0.9, 1);
-  assert.ok(late > early);
-  assert.ok(L.rampDistance('stop', 100, T, 0, 0.1) > L.rampDistance('stop', 100, T, 0.9, 1));
-});
-
-test('rampDistance rejects unknown phases', () => {
-  assert.throws(() => L.rampDistance('jog', 1, 1, 0, 1), /Unknown walk phase/);
+test('root motion matches the clips frame for frame', () => {
+  require('../src/renderer/root-motion.js');
+  const RM = globalThis.LuluRootMotion;
+  const m = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'assets', 'manifest.json'), 'utf8'));
+  assert.equal(RM.start.length, m.clips.walk_start.frames);
+  assert.equal(RM.loop.length, m.clips.walk_loop.frames);
+  assert.equal(RM.stop.length, m.clips.walk_stop.frames);
+  // Her real walking speed: about 322 px per cycle at Large (~297 px/s).
+  const perCycle = L.clipDistance(RM.loop);
+  assert.ok(perCycle > 300 && perCycle < 340, `cycle ${perCycle}`);
+  // Starting and stopping are gentle: no single frame moves further than a stride step.
+  assert.ok(Math.max(...RM.start, ...RM.stop, ...RM.loop) <= 15);
+  assert.ok(Math.min(...RM.start, ...RM.stop, ...RM.loop) >= 0);
 });
 
 const extents = { back: 200, front: 150 };
@@ -201,4 +202,9 @@ test('treatPlan lines her eating nose up exactly with the bone', () => {
   assert.ok(Math.abs(close.stop - 1500) >= 94 + 154 - 1e-9);
   // Nothing fits on a tiny screen.
   assert.equal(L.treatPlan({ ...args, width: 300, range: { min: 150, max: 150 }, from: 150, bone: 150 }), null);
+});
+
+test('pickAction repeats only when nothing else is possible', () => {
+  assert.equal(L.pickAction(Math.random, { sit: 1 }, 'sit'), 'sit');
+  assert.equal(L.pickAction(() => 0, { sit: 1, look: 1 }, 'sit'), 'look');
 });

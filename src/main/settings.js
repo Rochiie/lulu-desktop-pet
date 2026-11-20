@@ -14,10 +14,9 @@ const SIZE_OPTIONS = Object.freeze([
   Object.freeze({ label: 'Large', value: 1.0 }),
 ]);
 
-const WALK_SPEED_RANGE = Object.freeze([20, 400]);
-
 // Number preferences shown as sliders in the Settings window: [min, max].
 const RANGES = Object.freeze({
+  walkPace: Object.freeze([0.7, 1.3]), // walk animation speed; 1 = as animated
   tripChance: Object.freeze([0, 0.6]), // share of walks that visit another screen
   lookMultiplier: Object.freeze([0.25, 2]), // how often she looks at you, x normal
   moodStrength: Object.freeze([0, 1]), // 0 = same all day, 1 = full daily rhythm
@@ -31,7 +30,7 @@ const DEFAULTS = Object.freeze({
   avoidFullscreen: true,
   displayId: null,
   xFraction: 0.5,
-  walkSpeed: null, // null = use walkSpeedPxPerSec from the manifest
+  walkPace: 1,
   tripChance: 0.25,
   lookMultiplier: 1,
   moodStrength: 1,
@@ -42,7 +41,7 @@ const DEFAULTS = Object.freeze({
 
 // Settings the user can change in the Settings window (and reset).
 const USER_KEYS = Object.freeze([
-  'size', 'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'walkSpeed',
+  'size', 'startWithWindows', 'walkBetweenScreens', 'avoidFullscreen', 'walkPace',
   'tripChance', 'lookMultiplier', 'moodStrength', 'followSeconds', 'noticeMouse', 'walkIn',
 ]);
 
@@ -63,20 +62,13 @@ function sanitize(raw) {
   if (Number.isFinite(raw.xFraction) && raw.xFraction >= 0 && raw.xFraction <= 1) {
     out.xFraction = raw.xFraction;
   }
-  if (
-    Number.isFinite(raw.walkSpeed) &&
-    raw.walkSpeed >= WALK_SPEED_RANGE[0] &&
-    raw.walkSpeed <= WALK_SPEED_RANGE[1]
-  ) {
-    out.walkSpeed = raw.walkSpeed;
-  }
   return out;
 }
 
 // What the pet window needs to know about the user's preferences.
-function prefsFor(values, manifest) {
+function prefsFor(values) {
   return {
-    walkSpeed: values.walkSpeed === null ? manifest.walkSpeedPxPerSec : values.walkSpeed,
+    walkPace: values.walkPace,
     tripChance: values.tripChance,
     lookMultiplier: values.lookMultiplier,
     moodStrength: values.moodStrength,
@@ -139,4 +131,4 @@ class Settings {
   }
 }
 
-module.exports = { Settings, sanitize, prefsFor, DEFAULTS, USER_KEYS, RANGES, SIZE_OPTIONS, WALK_SPEED_RANGE };
+module.exports = { Settings, sanitize, prefsFor, DEFAULTS, USER_KEYS, RANGES, SIZE_OPTIONS };

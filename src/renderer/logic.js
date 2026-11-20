@@ -32,35 +32,42 @@
     return entries[entries.length - 1][0];
   }
 
-  // Weighted random action that never repeats the previous non-walk action.
+  // Weighted random action that never repeats the previous non-walk action
+  // (unless it is the only one available).
   function pickAction(rng, weights, lastAction) {
     const exclude = lastAction && lastAction !== 'walk' ? lastAction : null;
-    return pickWeighted(rng, weights, exclude);
+    const others = Object.entries(weights).some(([key, w]) => key !== exclude && w > 0);
+    return pickWeighted(rng, weights, others ? exclude : null);
   }
 
-  // Distance covered between clip times t1 and t2 (seconds) of a walk phase
-  // lasting T seconds with top speed vmax:
-  //   start: speed ramps linearly 0 -> vmax
-  //   loop:  constant vmax
-  //   stop:  speed ramps linearly vmax -> 0
-  function rampDistance(phase, vmax, T, t1, t2) {
-    const a = clamp(t1, 0, T);
-    const b = clamp(t2, 0, T);
-    if (b <= a) return 0;
-    switch (phase) {
-      case 'start':
-        return (vmax * (b * b - a * a)) / (2 * T);
-      case 'loop':
-        return vmax * (b - a);
-      case 'stop':
-        return vmax * (b - a - (b * b - a * a) / (2 * T));
-      default:
-        throw new Error(`Unknown walk phase: ${phase}`);
+  // Walking distances come from per-frame root motion (see root-motion.js):
+  // dx[i] is how far she moves when frame i is shown.
+
+  // Distance for the frames shown after `prev` up to and including `index`
+  // (prev = -1 before the first frame). If the loop wrapped, it runs to the
+  // end and on through frame `index` of the next cycle, whose frame 0 moves
+  // by wrapFirst.
+  function stepDistance(dx, prev, index, wrapped, wrapFirst = dx[0]) {
+    let d = 0;
+    if (!wrapped) {
+      for (let i = prev + 1; i <= index; i += 1) d += dx[i];
+      return d;
     }
+    for (let i = prev + 1; i < dx.length; i += 1) d += dx[i];
+    for (let i = 0; i <= index; i += 1) d += i === 0 ? wrapFirst : dx[i];
+    return d;
   }
 
-  function phaseDistance(phase, vmax, T) {
-    return rampDistance(phase, vmax, T, 0, T);
+  // Distance still to go in this pass of the clip after frame `index`.
+  function remainingDistance(dx, index) {
+    let d = 0;
+    for (let i = index + 1; i < dx.length; i += 1) d += dx[i];
+    return d;
+  }
+
+  // Whole clip (a repeat cycle when wrapFirst is given).
+  function clipDistance(dx, wrapFirst = dx[0]) {
+    return wrapFirst + remainingDistance(dx, 0);
   }
 
   // extents: how far her body reaches behind (back) and in front of (front)
@@ -225,8 +232,9 @@
     randInt,
     pickWeighted,
     pickAction,
-    rampDistance,
-    phaseDistance,
+    stepDistance,
+    remainingDistance,
+    clipDistance,
     walkRange,
     shouldEndWalk,
     canStartWalk,
