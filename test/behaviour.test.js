@@ -254,6 +254,7 @@ function setup({ config = {}, layout = makeLayout(1, 1500), xFraction = 0.5, cro
       begForTreats: false,
       yawnBeforeNap: 0,
       zoomiesWeight: 0,
+      gazeWeight: 0,
       toyWeight: 0,
       idleClipChance: 0,
       ...config,
@@ -1017,4 +1018,50 @@ test('a click while she is breathing cuts it short and she answers straight away
   assert.deepEqual(t.errors, []);
   const i = t.player.history.indexOf('stand_idle');
   assert.equal(t.player.history[i + 1], 'happy');
+});
+
+test('now and then she sits and gazes at you for a while, then gets up', async () => {
+  const t = setup({ config: { weights: { look: 1 }, gazeWeight: 1, gazeSeconds: [0.15, 0.2] } });
+  await t.player.next('gaze_loop');
+  const gazing = Date.now();
+  await t.player.next('gaze_out');
+  const held = Date.now() - gazing;
+  await until(() => t.player.history.lastIndexOf('look') > t.player.history.indexOf('gaze_out'));
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const h = t.player.history;
+  const i = h.indexOf('gaze_in');
+  const out = h.indexOf('gaze_out');
+  assert.deepEqual(h.slice(i, out + 1), ['gaze_in', 'gaze_loop', 'gaze_out']);
+  assert.ok(held >= 120, `she holds the gaze for gazeSeconds (held ${held} ms)`);
+  assert.equal(t.player.rates[out], 1);
+  assert.ok(h.includes('look'), 'the quick look still happens too');
+});
+
+test('a click while she gazes: she gets up a little quicker, then wags', async () => {
+  const t = setup({ config: { weights: { look: 1 }, gazeWeight: 1000, gazeSeconds: [60, 60] } });
+  await t.player.next('gaze_loop');
+  t.behaviour.notice(); // the mouse near her does not end the gaze
+  assert.equal(t.behaviour.pending, null);
+  t.behaviour.click();
+  await until(() => t.player.history.includes('happy'));
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  const h = t.player.history;
+  const out = h.indexOf('gaze_out');
+  assert.equal(h[out + 1], 'happy');
+  assert.equal(t.player.rates[out], globalThis.LuluConfig.gazeHurryRate);
+});
+
+test('grabbed while she gazes, she is picked up and put down standing', async () => {
+  const t = setup({ config: { weights: { look: 1 }, gazeWeight: 1000, gazeSeconds: [60, 60] } });
+  await t.player.next('gaze_loop');
+  t.behaviour.beginDrag();
+  await until(() => t.player.playing === 'pickup_held');
+  t.behaviour.endDrag();
+  await until(() => !t.behaviour.carrying);
+  t.stop();
+  assert.deepEqual(t.errors, []);
+  assert.equal(t.behaviour.pose, 'stand');
+  assert.ok(!t.player.history.includes('gaze_out'));
 });

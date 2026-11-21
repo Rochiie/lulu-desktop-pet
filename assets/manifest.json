@@ -257,6 +257,33 @@
       "endPose": "stand",
       "use": "put back down on the floor",
       "loop": false
+    },
+    "gaze_in": {
+      "file": "gaze_in.webm",
+      "frames": 69,
+      "seconds": 2.875,
+      "startPose": "stand",
+      "endPose": "gaze",
+      "use": "one-shot: sits down and turns to look at you (from sit, frames 0-68)",
+      "loop": false
+    },
+    "gaze_loop": {
+      "file": "gaze_loop.webm",
+      "frames": 36,
+      "seconds": 1.5,
+      "startPose": "gaze",
+      "endPose": "gaze",
+      "use": "sitting, gazing at you: loop seamlessly (sit frames 69-51-68, there and back)",
+      "loop": true
+    },
+    "gaze_out": {
+      "file": "gaze_out.webm",
+      "frames": 52,
+      "seconds": 2.167,
+      "startPose": "gaze",
+      "endPose": "stand",
+      "use": "one-shot: turns back and stands up (from sit, frames 69-120)",
+      "loop": false
     }
   },
   "notes": "All clips: transparent VP9 WebM (alpha), 24fps, same canvas size and same ground line, Lulu facing right. Flip horizontally for left-facing.",
@@ -265,6 +292,7 @@
   "poses": {
     "stand": "walk_start_first.png",
     "sleep": "sleep_loop_first.png",
-    "held": "pickup_held_first.png"
+    "held": "pickup_held_first.png",
+    "gaze": "gaze_loop_first.png"
   }
 }

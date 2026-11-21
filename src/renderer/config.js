@@ -38,6 +38,12 @@
     runFullSpeedBelow: 12,
     runSpeedShare: 0.5,
     yawnBeforeNap: 0.5, // yawn before lying down (sometimes)
+    // Now and then she sits and gazes at you for a while (the gaze clips, cut
+    // from sit) instead of the quick look. gazeHurryRate: how fast she gets
+    // up when something needs her.
+    gazeWeight: 8,
+    gazeSeconds: [8, 30],
+    gazeHurryRate: 1.6,
     headTiltShare: 0.4, // noticing you: head tilt instead of a look
     rollOverShare: 0.35, // petting: roll over for a belly rub instead of a wag
     pawShare: 0.3, // clicking her: offer a paw instead of a wag
@@ -49,7 +55,7 @@
     moods: Object.freeze([
       Object.freeze({ name: 'morning', from: 6, to: 11, weights: { walk: 1.3, stretch: 1.6, nap: 0.3, zoomies: 2, yawn: 0.5 }, hold: 0.8, nap: 0.8 }),
       Object.freeze({ name: 'day', from: 11, to: 18, weights: {}, hold: 1, nap: 1 }),
-      Object.freeze({ name: 'evening', from: 18, to: 22, weights: { walk: 0.7, sit: 1.3, nap: 2.5, yawn: 2, zoomies: 0.6 }, hold: 1.3, nap: 1.5 }),
+      Object.freeze({ name: 'evening', from: 18, to: 22, weights: { walk: 0.7, sit: 1.3, gaze: 1.3, nap: 2.5, yawn: 2, zoomies: 0.6 }, hold: 1.3, nap: 1.5 }),
       Object.freeze({ name: 'night', from: 22, to: 6, weights: { walk: 0.4, look: 0.6, sniff: 0.5, nap: 6, yawn: 3, zoomies: 0.15, dig: 0.4 }, hold: 1.5, nap: 3 }),
     ]),
 

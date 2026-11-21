@@ -18,6 +18,7 @@
   const COMMANDS = new Set(['walk', 'sit', 'nap', 'wake', 'come', 'treat', 'trick', 'throw']);
   const TRICKS = Object.freeze(['head_tilt', 'play', 'roll_over', 'paw', 'beg', 'spin', 'yawn', 'scratch', 'dig']);
   const PICKUP_CLIPS = Object.freeze(['pickup_lift', 'pickup_held', 'pickup_down']);
+  const GAZE_CLIPS = Object.freeze(['gaze_in', 'gaze_loop', 'gaze_out']);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   class Behaviour {
@@ -512,6 +513,7 @@
     notice() {
       if (!this.prefs.noticeMouse || this.follow || this.treat) return;
       if (this.dragging || this.pose === 'sleep' || this.pending) return;
+      if (this.pose === 'gaze') return; // already looking at you
       if (this.walk && this.walk.target !== null) return; // already coming to you
       const now = Date.now();
       if (now - this.lastNotice < this.config.noticeCooldownMs) return;
@@ -652,6 +654,7 @@
       for (const [trick, weight] of Object.entries(this.config.trickWeights)) {
         if (this.hasClip(trick)) base[trick] = weight;
       }
+      if (this.canGaze()) base.gaze = this.config.gazeWeight;
       if (this.canRun()) base.zoomies = this.config.zoomiesWeight;
       if (this.prefs.toy) base.toy = this.config.toyWeight;
       return L.applyMood(base, mood);
@@ -678,7 +681,8 @@
       this.dragging = true;
       if (this.carrying) return; // grabbed again while being put down: carry() lifts her again
       this.interrupt();
-      if (this.pose === 'stand' && PICKUP_CLIPS.every((c) => this.hasClip(c))) {
+      // Sitting and gazing at you counts as standing here: she is lifted from it.
+      if ((this.pose === 'stand' || this.pose === 'gaze') && PICKUP_CLIPS.every((c) => this.hasClip(c))) {
         this.carrying = true;
         this.carry().catch((err) => this.api.reportError(`Pick-up stopped: ${err && err.stack ? err.stack : err}`));
         return;
@@ -936,6 +940,11 @@
           this.dropTreat(req.x, { queue: false });
           await this.eatTreat();
           return;
+        case 'gaze':
+          if (!this.canGaze()) return;
+          this.lastAction = 'gaze';
+          await this.gaze();
+          return;
         case 'nap':
           this.lastAction = 'nap';
           await this.goToSleep(false);
@@ -954,6 +963,40 @@
           return;
         default:
           throw new Error(`Unknown action: ${type}`);
+      }
+    }
+
+    canGaze() {
+      return GAZE_CLIPS.every((c) => this.hasClip(c));
+    }
+
+    // Sits down, turns and gazes at you for a while (gazeSeconds), then turns
+    // back and stands up. Anything that needs her (a click, a call, you going
+    // idle) ends the gaze at the end of the current loop, and she gets up a
+    // little quicker.
+    async gaze() {
+      const [lo, hi] = this.config.gazeSeconds;
+      const end = Date.now() + L.randRange(this.rng, lo, hi) * 1000;
+      try {
+        await this.playClip('gaze_in');
+        let called = Boolean(this.pending || this.userIdle);
+        if (!called) {
+          const timer = setTimeout(() => this.player.endLoop(), Math.max(0, end - Date.now()));
+          this.onNotify = () => {
+            called = true;
+            this.player.endLoop();
+          };
+          try {
+            await this.playClip('gaze_loop', { loop: true });
+          } finally {
+            clearTimeout(timer);
+            this.onNotify = null;
+          }
+        }
+        await this.playClip('gaze_out', { rate: called ? this.config.gazeHurryRate : 1 });
+      } catch (err) {
+        if (err instanceof Interrupt) this.pose = 'stand'; // cut short (a grab, hidden): back on her feet
+        throw err;
       }
     }
 
