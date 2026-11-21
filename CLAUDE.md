@@ -45,7 +45,7 @@ All animation is finished and lives in `assets/`. Do not regenerate or edit the 
 ## Rendering
 
 - Preload all 11 clips as `<video muted playsinline preload="auto">` elements.
-- Draw the active video to a `<canvas>` each frame at Lulu's x position, flipped with `scale(-1, 1)` when facing left. Drawing to canvas also gives the hit-test pixels. Wake for each frame with a timer aimed just past the frame's due time (from `currentTime`), not `requestVideoFrameCallback` or `requestAnimationFrame`: those tick on every display refresh (240×/s on a 240 Hz screen) and cost about a third of her animation CPU (measured 2026-11-21).
+- Draw the active video to a `<canvas>` each frame at Lulu's x position, flipped with `scale(-1, 1)` when facing left. Drawing to canvas also gives the hit-test pixels. Wake for each frame with a timer aimed just past the frame's due time (from `currentTime`), not `requestVideoFrameCallback` or `requestAnimationFrame`: those tick on every display refresh (240×/s on a 240 Hz screen) and cost about a third of her animation CPU (measured 2026-11-21). The same goes for the turn, the cut-short fade and the ambient loop (ball, bone, snow): timers at 60/30/20 per second, never `requestAnimationFrame` (snow alone cost twice as much on it).
 - Only Lulu and her shadow are redrawn every frame. Bed, bowl, ball and treat sit on their own canvases (`#back` behind her, `#front` in front) that are repainted only when they change.
 - Switch clips on the `ended` event with zero gap. The next clip should already be loaded and seeked to 0. Loops (`walk_loop`, `sleep_loop`) play with `loop = true` until the state machine changes.
 - During a static hold, draw the matching pose PNG.

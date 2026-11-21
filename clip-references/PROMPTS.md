@@ -136,6 +136,24 @@ camera movement, zoom, cut, text, watermark`.
 I cut this into three clips: being lifted, a seamless dangling loop (she stays in it for as long
 as you hold her), and being put back down.
 
+**16. Sit and gaze at you** (`sit_gaze`, 12 seconds)
+First and last frame: `stand_facing_right_on_green.png`. Use the base prompt.
+> The dog sits down calmly on the spot. Once seated, it turns its head and chest towards the
+> camera and looks straight into the lens with a soft, attentive, loving gaze, as if looking
+> at its owner. It holds that look for about six seconds while staying sitting in the same
+> place: it breathes gently, blinks slowly once or twice, its tan eyebrows twitch, its ears
+> lift slightly and relax, and its tail sweeps slowly on the floor once. Its paws do not move
+> during the look. Then it turns its head back to side profile, stands up, and ends standing
+> still in exact side profile facing right, as it started.
+
+Negative prompt (if your tool has one): `walking, lying down, camera movement, zoom, cut,
+text, watermark, props, person`.
+
+I cut this into three clips like the pick-up: sitting down and turning to you, a seamless
+gazing loop (so she can hold the look for as long as she likes), and turning back and
+standing up. If the gaze part of the video is shorter than about four seconds or she
+fidgets a lot during it, make it again: a calm, steady middle is what makes the loop work.
+
 ## Turning a video into a Lulu clip
 
 From the project folder (needs ffmpeg: `winget install Gyan.FFmpeg`):

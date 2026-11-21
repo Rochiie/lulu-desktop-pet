@@ -32,6 +32,10 @@
   const CUT_FADE_MS = 140;
   const AMBIENT_FPS = 30; // redraws for the rolling ball and a dropping bone
   const SNOW_FPS = 20; // the snow has its own layer, redrawn this often
+  // The turn and the cut-short fade are drawn this often. They run on timers,
+  // not requestAnimationFrame, which fires on every display refresh (240
+  // times a second on a 240 Hz screen) and keeps the GPU process busy too.
+  const EFFECT_FPS = 60;
   const BED_RIM_BACK = 44; // bed rim heights in clip pixels above her ground line
   const BED_RIM_FRONT = 18; // (both rims rise a little more at the ends)
   const TOY_R = 11; // ball radius, clip pixels
@@ -293,13 +297,13 @@
       this.snowCanvas = snowCanvas;
       this.snowCtx = snowCanvas ? snowCanvas.getContext('2d') : null;
       this.snowDensity = 4; // flakes per 100 px of width
-      this.ambientRaf = null;
+      this.ambientTimer = null;
       this.ambientPaused = false;
       this.ambientLast = 0;
       this.lastDrawAt = 0;
       this.fade = null; // { cx, dir, scale, size, start } while a cut-short frame fades out
       this.fadeCanvas = null; // that frame
-      this.fadeRaf = null;
+      this.fadeTimer = null;
       this.width = canvas.width;
       this.height = canvas.height;
       this.shadows = true;
@@ -504,15 +508,14 @@
       if (this.active) return Promise.reject(new Error(`Cannot turn while ${this.active.name} is playing`));
       if (this.turning) return Promise.reject(new Error('Already turning'));
       return new Promise((resolve, reject) => {
-        const t = { resolve, reject, rafId: null, done: false };
+        const t = { resolve, reject, timerId: null, done: false };
         this.turning = t;
-        let start = null;
+        const start = performance.now();
         let flipped = false;
-        const frame = (now) => {
-          t.rafId = null;
+        const frame = () => {
+          t.timerId = null;
           if (t.done) return;
-          if (start === null) start = now;
-          const p = Math.min(1, (now - start) / durationMs);
+          const p = Math.min(1, (performance.now() - start) / durationMs);
           const eased = p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p); // ease in-out
           if (!flipped && eased >= 0.5) {
             flipped = true;
@@ -529,16 +532,16 @@
           };
           this.draw();
           if (p >= 1) this._endTurn(t, null);
-          else t.rafId = requestAnimationFrame(frame);
+          else t.timerId = setTimeout(frame, 1000 / EFFECT_FPS);
         };
-        t.rafId = requestAnimationFrame(frame);
+        t.timerId = setTimeout(frame, 0);
       });
     }
 
     _endTurn(t, err) {
       if (t.done) return;
       t.done = true;
-      if (t.rafId !== null) cancelAnimationFrame(t.rafId);
+      if (t.timerId !== null) clearTimeout(t.timerId);
       if (this.turning === t) this.turning = null;
       this.effect = null;
       this.draw();
@@ -569,14 +572,14 @@
       fctx.drawImage(a.video, 0, 0, width, height);
       const { cx, dir, scale } = this.view();
       this.fade = { cx, dir, scale, size: this.displaySize(), start: performance.now() };
-      if (this.fadeRaf !== null) return;
+      if (this.fadeTimer !== null) return;
       const step = () => {
-        this.fadeRaf = null;
+        this.fadeTimer = null;
         if (!this.fade) return;
         this.draw();
-        if (this.fade) this.fadeRaf = requestAnimationFrame(step);
+        if (this.fade) this.fadeTimer = setTimeout(step, 1000 / EFFECT_FPS);
       };
-      this.fadeRaf = requestAnimationFrame(step);
+      this.fadeTimer = setTimeout(step, 1000 / EFFECT_FPS);
     }
 
     _drawFade(ctx) {
@@ -609,9 +612,9 @@
 
     setAmbientPaused(paused) {
       this.ambientPaused = paused;
-      if (paused && this.ambientRaf !== null) {
-        cancelAnimationFrame(this.ambientRaf);
-        this.ambientRaf = null;
+      if (paused && this.ambientTimer !== null) {
+        clearTimeout(this.ambientTimer);
+        this.ambientTimer = null;
       }
       // No flakes frozen in mid-air while paused: just the settled snow.
       if (paused && this.snowCtx) this._drawSnowLayer(performance.now(), { flakes: false });
@@ -633,22 +636,31 @@
       return this._propsMoving(now) || this._snowActive();
     }
 
+    // Runs on a timer aimed at the next redraw that is due (a timer, not
+    // requestAnimationFrame: see EFFECT_FPS).
     _wakeAmbient() {
-      if (this.ambientRaf !== null || this.ambientPaused) return;
+      if (this.ambientTimer !== null || this.ambientPaused) return;
       this.ambientLast = performance.now();
-      const tick = (now) => {
-        this.ambientRaf = null;
+      const tick = () => {
+        this.ambientTimer = null;
+        const now = performance.now();
         const dt = Math.min(0.05, Math.max(0, (now - this.ambientLast) / 1000));
         this.ambientLast = now;
         const moving = this._propsMoving(now);
         this._stepToy(dt);
         this._stepSnow(dt);
         // A playing clip redraws on its own frames too; keep to about AMBIENT_FPS.
-        if ((moving || !this.snowCtx) && now - this.lastDrawAt >= 1000 / AMBIENT_FPS - 4) this.draw();
-        if (this.snowCtx && now - this.snow.drawnAt >= 1000 / SNOW_FPS - 4) this._drawSnowLayer(now);
-        if (!this.ambientPaused && this._ambientBusy(now)) this.ambientRaf = requestAnimationFrame(tick);
+        const drawsHer = moving || !this.snowCtx;
+        if (drawsHer && now - this.lastDrawAt >= 1000 / AMBIENT_FPS - 1) this.draw();
+        if (this.snowCtx && now - this.snow.drawnAt >= 1000 / SNOW_FPS - 1) this._drawSnowLayer(now);
+        if (this.ambientPaused || !this._ambientBusy(now)) return;
+        let due = Infinity;
+        if (drawsHer) due = this.lastDrawAt + 1000 / AMBIENT_FPS;
+        if (this.snowCtx) due = Math.min(due, this.snow.drawnAt + 1000 / SNOW_FPS);
+        const wait = Math.min(FRAME_TIMER_MAX_MS, Math.max(1, due - performance.now() + FRAME_LATE_MS));
+        this.ambientTimer = setTimeout(tick, wait);
       };
-      this.ambientRaf = requestAnimationFrame(tick);
+      this.ambientTimer = setTimeout(tick, 0);
     }
 
     // ------------------------------------------------ bed
