@@ -8,8 +8,12 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Stacked in this order: her shadow, things behind her, her, things in front, snow. -->
+  <canvas id="shadow" class="layer" aria-hidden="true"></canvas>
+  <canvas id="back" class="layer" aria-hidden="true"></canvas>
   <canvas id="stage"></canvas>
-  <canvas id="snow" aria-hidden="true"></canvas>
+  <canvas id="front" class="layer" aria-hidden="true"></canvas>
+  <canvas id="snow" class="layer" aria-hidden="true"></canvas>
   <div id="media" aria-hidden="true"></div>
   <div id="tune" hidden></div>
   <script src="logic.js"></script>

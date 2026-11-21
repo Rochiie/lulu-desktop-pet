@@ -12,8 +12,17 @@
   const HAVE_CURRENT_DATA = 2;
   const BONE_DROP_MS = 700;
   const BOWL_SCALE = 1.25; // bowl drawing units per clip pixel
-  // The next clip needs a few ms to show its first frame; start it this much early.
-  const HANDOVER_LEAD_MS = 6;
+  // The next clip needs a moment to show its first frame; start it this much early.
+  const HANDOVER_LEAD_MS = 2;
+  // Clip frames are drawn by a timer that wakes this long after each frame is
+  // due (see _schedule).
+  const FRAME_LATE_MS = 1;
+  // On Windows, Chromium runs timers shorter than about 32 ms to the
+  // millisecond but snaps longer ones to the 15.6 ms system tick (which made
+  // frames land up to 15 ms late). Longer waits are split into steps this long.
+  const FRAME_TIMER_MAX_MS = 25;
+  const END_WATCH_FRAMES = 2; // see _watchEnd
+  const FRAME_EPSILON = 1e-3; // frames; absorbs rounding in currentTime
   // Once a clip has played, Chromium keeps its decoder (about 4.5 MB) until the
   // video is reloaded. Reloading a clip that has sat unused this long frees it;
   // a reloaded clip still starts within a frame, so hand-overs stay seamless.
@@ -240,11 +249,27 @@
     return ctx.getImageData(0, 0, width, height).data;
   }
 
+  function context2d(canvas) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas is not available');
+    return ctx;
+  }
+
   class Player {
-    constructor({ canvas, manifest, assetBase, view, mediaHost, sizeFor = () => 1, snowCanvas = null }) {
+    // layers (optional, needs snowCanvas): { shadow, back, front } canvases
+    // stacked shadow < back < canvas < front. Only her and her shadow are
+    // then redrawn every frame; her bed, bowl, ball and treat are redrawn
+    // only when they change (repainting them every frame was about a sixth
+    // of her animation cost). Without layers everything is drawn on canvas.
+    constructor({ canvas, manifest, assetBase, view, mediaHost, sizeFor = () => 1, snowCanvas = null, layers = null }) {
       this.canvas = canvas;
-      this.ctx = canvas.getContext('2d');
-      if (!this.ctx) throw new Error('2D canvas is not available');
+      this.ctx = context2d(canvas);
+      if (layers && !snowCanvas) throw new Error('Layers need a snow canvas');
+      this.layers = layers ? {
+        shadow: { canvas: layers.shadow, ctx: context2d(layers.shadow), key: null },
+        back: { canvas: layers.back, ctx: context2d(layers.back), key: null },
+        front: { canvas: layers.front, ctx: context2d(layers.front), key: null },
+      } : null;
       this.manifest = manifest;
       this.assetBase = assetBase;
       this.view = view; // () => ({ cx, dir, scale })
@@ -282,7 +307,6 @@
       this.source = null; // what is on the canvas now: a <video> or a pose <img>
       this.dpr = 1;
       this.onDraw = null;
-      this.useFrameCallback = typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function';
     }
 
     async load() {
@@ -399,12 +423,15 @@
       this.canvas.style.height = `${layout.height}px`;
       this.width = layout.width;
       this.height = layout.height;
-      if (this.snowCanvas) {
-        if (this.snowCanvas.width !== w) this.snowCanvas.width = w;
-        if (this.snowCanvas.height !== h) this.snowCanvas.height = h;
-        this.snowCanvas.style.width = `${layout.width}px`;
-        this.snowCanvas.style.height = `${layout.height}px`;
+      const others = [this.snowCanvas, ...(this.layers ? Object.values(this.layers).map((l) => l.canvas) : [])];
+      for (const c of others) {
+        if (!c) continue;
+        if (c.width !== w) c.width = w;
+        if (c.height !== h) c.height = h;
+        c.style.width = `${layout.width}px`;
+        c.style.height = `${layout.height}px`;
       }
+      if (this.layers) for (const l of Object.values(this.layers)) l.key = null; // repaint them all
       const columns = Math.ceil(layout.width / SNOW.column) + 1;
       if (this.snow.depth.length !== columns) {
         this.snow.depth = new Float32Array(columns);
@@ -440,7 +467,7 @@
         const a = {
           name, video, onFrame, resolve, reject, rate,
           frames: this.manifest.clips[name].frames,
-          lastIndex: -1, lastShownAt: 0, callbackId: null, done: false,
+          lastIndex: -1, lastShownAt: 0, callbackId: null, watchId: null, done: false,
         };
         a.onEnded = () => this._ended(a);
         a.onError = () => this._finish(a, new Error(`Playback of ${name} failed (${mediaErrorText(video)})`));
@@ -449,7 +476,7 @@
         video.loop = loop;
         video.playbackRate = rate;
         this.active = a;
-        this._schedule(a);
+        this._schedule(a, 0); // its first frame (parked at 0, already decoded) right away
         video.play().catch((err) => {
           if (!a.done) this._finish(a, new Error(`Could not start ${name}: ${err.message}`));
         });
@@ -925,18 +952,33 @@
       return this.sizeFor(who.clip || null, who.pose || null, index);
     }
 
-    _drawShadows(ctx) {
+    // Her own shadow: { centre, y, rx, ry, alpha } in device pixels, or null.
+    _herShadow() {
+      if (!this.source || !this.bodyExtent) return null;
       const { cx, dir, scale } = this.view();
       const k = this.dpr * scale;
+      const { back, front } = this.bodyExtent;
+      const lift = this.effect ? this.effect.lift : 0;
+      const size = this.displaySize();
+      return {
+        centre: this.dpr * cx + dir * ((front - back) / 2) * k,
+        y: this.dpr * this.manifest.groundY * scale - 1.5 * k,
+        rx: (front + back) * 0.36 * k * size * (1 - lift / 40),
+        ry: 7.5 * k,
+        alpha: 0.3 * (1 - lift / 25),
+      };
+    }
+
+    _drawHerShadow(ctx, s) {
+      if (s) drawShadow(ctx, s.centre, s.y, s.rx, s.ry, s.alpha);
+    }
+
+    // The shadows under her treat, bowl, bed and ball.
+    _drawPropShadows(ctx, now) {
+      const { scale } = this.view();
+      const k = this.dpr * scale;
       const groundY = this.dpr * this.manifest.groundY * scale;
-      if (this.source && this.bodyExtent) {
-        const { back, front } = this.bodyExtent;
-        const lift = this.effect ? this.effect.lift : 0;
-        const centre = this.dpr * cx + dir * ((front - back) / 2) * k;
-        const size = this.displaySize();
-        drawShadow(ctx, centre, groundY - 1.5 * k, (front + back) * 0.36 * k * size * (1 - lift / 40), 7.5 * k, 0.3 * (1 - lift / 25));
-      }
-      if (this.prop && this.prop.eaten < 1 && performance.now() - this.prop.born > BONE_DROP_MS * 0.6) {
+      if (this.prop && this.prop.eaten < 1 && now - this.prop.born > BONE_DROP_MS * 0.6) {
         drawShadow(ctx, this.dpr * this.prop.x, groundY - k, 30 * k * (1 - 0.6 * this.prop.eaten), 3.5 * k, 0.22);
       }
       if (this.bowl) drawShadow(ctx, this.dpr * this.bowl.x, groundY - k, 31 * BOWL_SCALE * k, 4 * k, 0.26);
@@ -956,15 +998,15 @@
       ctx.restore();
     }
 
-    draw() {
-      const ctx = this.ctx;
-      this.lastDrawAt = performance.now();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      if (!this.snowCtx) this._drawSnowPile(ctx);
-      if (this.shadows) this._drawShadows(ctx);
+    // Behind her: prop shadows (when shadows are on), the back of her bed, a treat.
+    _drawBack(ctx, now) {
+      if (this.shadows) this._drawPropShadows(ctx, now);
       if (this.bed) this._drawBed(ctx, 'back'); // she lies in it...
       if (this.prop) this._drawProp(ctx); // behind her, so she stands over it
+    }
+
+    // Her (and a cut-short frame fading out over her).
+    _drawHer(ctx) {
       const src = this.source;
       if (src && !(src instanceof HTMLVideoElement && src.readyState < HAVE_CURRENT_DATA)) {
         const { cx, dir, scale } = this.view();
@@ -978,44 +1020,142 @@
         ctx.drawImage(src, -this.manifest.standingCenterX, 0, this.manifest.width, this.manifest.height);
       }
       if (this.fade) this._drawFade(ctx);
+    }
+
+    // In front of her: the front rim of her bed, her bowl, her ball.
+    _drawFront(ctx) {
       if (this.bed) this._drawBed(ctx, 'front'); // ...behind its front rim
       if (this.bowl) this._drawBowl(ctx); // in front of her, so her snout dips into it
       if (this.toy) this._drawToy(ctx);
-      if (!this.snowCtx) this._drawFlakes(ctx);
+    }
+
+    // What the back and front layers show; each is repainted only when its
+    // key changes. Anything moving by itself (a treat dropping, the water
+    // rippling) changes the key on every draw.
+    _layerKeys(now) {
+      const { scale } = this.view();
+      const base = `${this.canvas.width}x${this.canvas.height}@${this.dpr}/${scale}`;
+      const bed = this.bed ? `${this.bed.x},${this.bed.halfWidth}` : '-';
+      const t = this.toy;
+      const toyAt = t ? `${t.x},${t.h}` : '-';
+      const p = this.prop;
+      const prop = p ? `${p.x},${p.eaten},${Math.min(now - p.born, BONE_DROP_MS)}` : '-';
+      const bowlAt = this.bowl ? `${this.bowl.x}` : '-';
+      return {
+        back: `${base}|${this.shadows}|${bed}|${prop}|${bowlAt}|${toyAt}`,
+        front: `${base}|${bed}|${bowlAt},${this.bowl && this.bowl.drinking ? now : 0}|${toyAt},${t ? `${t.angle},${t.squash}` : ''}`,
+      };
+    }
+
+    _repaint(layer, key, paint) {
+      if (layer.key === key) return;
+      layer.key = key;
+      const ctx = layer.ctx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+      paint(ctx);
+    }
+
+    draw() {
+      const now = performance.now();
+      this.lastDrawAt = now;
+      const ctx = this.ctx;
+      const herShadow = this.shadows ? this._herShadow() : null;
+      if (this.layers) {
+        const { shadow, back, front } = this.layers;
+        const keys = this._layerKeys(now);
+        const s = herShadow;
+        const shadowKey = s ? `${this.canvas.width}|${s.centre},${s.y},${s.rx},${s.ry},${s.alpha}` : '-';
+        this._repaint(shadow, shadowKey, (c) => this._drawHerShadow(c, s));
+        this._repaint(back, keys.back, (c) => this._drawBack(c, now));
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this._drawHer(ctx);
+        this._repaint(front, keys.front, (c) => this._drawFront(c));
+      } else {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (!this.snowCtx) this._drawSnowPile(ctx);
+        this._drawHerShadow(ctx, herShadow);
+        this._drawBack(ctx, now);
+        this._drawHer(ctx);
+        this._drawFront(ctx);
+        if (!this.snowCtx) this._drawFlakes(ctx);
+      }
       if (this.onDraw) this.onDraw();
     }
 
-    _schedule(a) {
-      if (this.useFrameCallback) {
-        a.callbackId = a.video.requestVideoFrameCallback((now, meta) => this._frame(a, meta.mediaTime, now));
-      } else {
-        a.callbackId = requestAnimationFrame((now) => this._frame(a, a.video.currentTime, now));
+    // Wakes up just after the playing clip's next frame is due and draws it.
+    // A timer, not requestVideoFrameCallback: a frame callback keeps the video
+    // ticking with every refresh of the display (240 times a second on a
+    // 240 Hz screen) in both the page and the GPU process, which was about a
+    // third of what animating her cost. Drawing the video reads the frame for
+    // its current time, so the result on screen is the same.
+    _schedule(a, wait = null) {
+      let ms = wait;
+      if (ms === null) {
+        const fps = this.manifest.fps;
+        const video = a.video;
+        const t = video.currentTime;
+        if (video.seeking || t >= video.duration - FRAME_EPSILON / fps) {
+          ms = 4; // at its end, looping back to the start: watch closely
+        } else {
+          const next = (Math.floor(t * fps + FRAME_EPSILON) + 1) / fps;
+          ms = Math.min(FRAME_TIMER_MAX_MS, Math.max(1, ((next - t) * 1000) / a.rate + FRAME_LATE_MS));
+        }
       }
+      a.callbackId = setTimeout(() => this._frame(a, performance.now()), ms);
     }
 
     _cancel(a) {
+      this._unwatchEnd(a);
       if (a.callbackId === null) return;
-      if (this.useFrameCallback) a.video.cancelVideoFrameCallback(a.callbackId);
-      else cancelAnimationFrame(a.callbackId);
+      clearTimeout(a.callbackId);
       a.callbackId = null;
     }
 
-    _frame(a, mediaTime, now) {
+    // A video nobody is watching frame by frame stalls for up to a quarter
+    // of a second where it loops back to the start (and where it ends), so
+    // for a clip's last few frames a frame callback is kept pending, which
+    // keeps it going smoothly. Only for those frames: see _schedule.
+    _watchEnd(a) {
+      if (a.watchId !== null || typeof a.video.requestVideoFrameCallback !== 'function') return;
+      const keep = () => {
+        a.watchId = a.done ? null : a.video.requestVideoFrameCallback(keep);
+      };
+      keep();
+    }
+
+    _unwatchEnd(a) {
+      if (a.watchId === null) return;
+      a.video.cancelVideoFrameCallback(a.watchId);
+      a.watchId = null;
+    }
+
+    _frame(a, now) {
       a.callbackId = null;
       if (a.done) return;
-      const index = Math.min(a.frames - 1, Math.max(0, Math.round(mediaTime * this.manifest.fps)));
+      const video = a.video;
+      if (video.readyState < HAVE_CURRENT_DATA) {
+        this._schedule(a, 4); // still loading (a released clip): look again shortly
+        return;
+      }
+      const t = video.ended ? video.duration : video.currentTime;
+      const index = Math.min(a.frames - 1, Math.max(0, Math.floor(t * this.manifest.fps + FRAME_EPSILON)));
       if (index !== a.lastIndex) {
         const wrapped = a.lastIndex !== -1 && index < a.lastIndex;
         try {
           if (a.onFrame) a.onFrame({ prevIndex: a.lastIndex, index, wrapped, frames: a.frames });
           a.lastIndex = index;
           a.lastShownAt = now;
-          this.source = a.video;
+          this.source = video;
           this.draw();
         } catch (err) {
           this._finish(a, err);
           return;
         }
+        if (index >= a.frames - END_WATCH_FRAMES) this._watchEnd(a);
+        else this._unwatchEnd(a);
       }
       this._schedule(a);
     }

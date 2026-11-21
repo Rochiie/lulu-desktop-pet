@@ -7,15 +7,16 @@ body {
   user-select: none;
 }
 
+/* Every canvas covers the window; they stack in page order. Only #stage (her)
+   takes the mouse; the layers above and below it never do. */
 canvas {
   display: block;
-}
-
-/* Snow, drawn over her; it never takes the mouse. */
-#snow {
   position: fixed;
   left: 0;
   top: 0;
+}
+
+.layer {
   pointer-events: none;
 }
 

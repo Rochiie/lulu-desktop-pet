@@ -220,6 +220,11 @@
       assetBase: '../../assets/',
       mediaHost: document.getElementById('media'),
       snowCanvas: document.getElementById('snow'),
+      layers: {
+        shadow: document.getElementById('shadow'),
+        back: document.getElementById('back'),
+        front: document.getElementById('front'),
+      },
       view: () => (behaviour ? behaviour.view() : { cx: layout.width / 2, dir: 1, scale: layout.scale }),
       sizeFor: (clip, pose, index) => window.LuluLogic.displaySize(clip, pose, index, config),
     });
